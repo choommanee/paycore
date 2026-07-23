@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PayCore — Checkout</title>
+<link rel="stylesheet" href="/assets/paycore.css" />
+<style>
+  /* Page-specific: centred single-card hosted-checkout layout on the PayCore
+     design system. All colours/spacing/typography come from paycore.css tokens. */
+  body{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:var(--pc-s5)}
+  .checkout{width:100%;max-width:400px}
+  .checkout .pc-card-body{padding:var(--pc-s6)}
+  .co-brand{display:flex;align-items:center;gap:var(--pc-s3);margin-bottom:var(--pc-s5)}
+  .co-brand .co-store{font-size:var(--pc-fs-15);font-weight:600}
+  .co-amount{display:flex;justify-content:space-between;align-items:baseline;
+       padding-bottom:var(--pc-s4);margin-bottom:var(--pc-s4);border-bottom:1px solid var(--pc-line)}
+  .co-amount .co-amount-label{color:var(--pc-muted);font-size:var(--pc-fs-13)}
+  .co-amount .co-amount-value{font-size:var(--pc-fs-22);font-weight:600;font-variant-numeric:tabular-nums}
+  .co-field{position:relative}
+  .co-brandmark{position:absolute;right:12px;top:31px;font-size:var(--pc-fs-12);font-weight:600;color:var(--pc-accent)}
+  .co-trust{display:flex;align-items:center;justify-content:center;gap:6px;
+       margin-top:var(--pc-s4);color:var(--pc-muted);font-size:var(--pc-fs-12)}
+  .co-note{font-size:var(--pc-fs-11);color:var(--pc-muted);text-align:center;margin-top:var(--pc-s2)}
+  /* result / progress modal content */
+  .co-modal{text-align:center}
+  .co-modal .pc-spinner{margin:0 auto var(--pc-s4)}
+  .co-modal h3{margin-bottom:var(--pc-s2)}
+  .co-modal p{color:var(--pc-muted);font-size:var(--pc-fs-13);margin-bottom:var(--pc-s5)}
+  .co-ok{width:48px;height:48px;border-radius:50%;background:var(--pc-success-bg);color:var(--pc-success);
+       display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto var(--pc-s3)}
+  .co-fail{width:48px;height:48px;border-radius:50%;background:var(--pc-danger-bg);color:var(--pc-danger);
+       display:flex;align-items:center;justify-content:center;font-size:26px;margin:0 auto var(--pc-s3)}
+</style>
+</head>
+<body>
+  <form class="checkout pc-card" id="form" novalidate>
+   <div class="pc-card-body">
+    <div class="co-brand"><span data-pc-logo="mark" data-size="28"></span><span class="co-store">Acme Store</span></div>
+    <div class="co-amount"><span class="co-amount-label">Total to pay</span><strong class="co-amount-value" id="amt">฿1,290.00</strong></div>
+
+    <div class="pc-form">
+      <div class="pc-field co-field">
+        <label class="pc-label" for="card">Card number</label>
+        <input class="pc-input" id="card" inputmode="numeric" autocomplete="cc-number" placeholder="1234 1234 1234 1234" maxlength="19" />
+        <span class="co-brandmark" id="cardBrand"></span>
+        <div class="pc-error" id="cardErr"></div>
+      </div>
+
+      <div class="pc-row">
+        <div class="pc-field">
+          <label class="pc-label" for="exp">Expiry</label>
+          <input class="pc-input" id="exp" inputmode="numeric" autocomplete="cc-exp" placeholder="MM / YY" maxlength="7" />
+        </div>
+        <div class="pc-field">
+          <label class="pc-label" for="cvv">CVV</label>
+          <input class="pc-input" id="cvv" inputmode="numeric" autocomplete="cc-csc" placeholder="123" maxlength="4" />
+        </div>
+      </div>
+      <div class="pc-error" id="expErr"></div>
+
+      <div class="pc-field">
+        <label class="pc-label" for="name">Name on card</label>
+        <input class="pc-input" id="name" autocomplete="cc-name" placeholder="SAKDA C." />
+      </div>
+
+      <button class="pc-btn pc-btn-primary pc-btn-lg pc-btn-block" type="submit" id="pay">Pay ฿1,290.00</button>
+    </div>
+
+    <div class="co-trust">🔒 Secured · PCI-DSS · 3-D Secure</div>
+    <div class="co-note">Card is tokenized in-browser; only the token is sent to /v1/payments.</div>
+    <!-- Card testing note: cards go straight through the mock acquirer, so they
+         do NOT need the Sandbox Bank simulator (that is only for QR). Use these
+         test PANs to force each outcome (matched on the last 4 digits):
+           · last4 0000 -> declined (insufficient funds)
+           · last4 0119 -> 3-D Secure required (challenge flow)
+           · any other  -> approved
+         For QR payments use the Thai QR tab and open the Sandbox Bank simulator. -->
+    <div class="co-note" style="margin-top:6px">
+      💳 ทดสอบบัตร (ไม่ต้องใช้แอปธนาคารจำลอง): ลงท้าย <b>0000</b> = ปฏิเสธ ·
+      <b>0119</b> = ต้องยืนยัน 3-D Secure · เลขอื่น = อนุมัติ
+    </div>
+   </div>
+  </form>
+
+  <div class="pc-overlay" id="overlay">
+    <div class="pc-modal co-modal" id="modal"><div class="pc-modal-body" id="modalBody"></div></div>
+  </div>
+
+<script src="/assets/paycore.js" defer></script>
+<script>
+/* ---- Hosted checkout — real gateway calls ----
+   The PAN is tokenized client-side into a single-use vault token; ONLY that
+   token + an Idempotency-Key are sent to POST /v1/payments. The raw card number
+   never reaches the gateway API (it stays outside PCI-DSS scope — see the note
+   on domain.CreatePaymentRequest.PaymentToken, "vault token, not PAN").
+
+   There is no separate tokenization endpoint in the router, so tokenize() below
+   EMULATES the vault contract: it mints an opaque single-use `tok_...` value.
+   In production swap tokenize() for a call to your PCI-scoped vault/iframe SDK;
+   the rest of this file (the POST + state handling) stays identical. */
+
+/* ================= AUTH MODEL — READ BEFORE SHIPPING =================
+   The requests below (POST /v1/payments, POST /v1/payments/{id}/3ds/return)
+   carry NO Authorization / X-API-Key header. That is DELIBERATE:
+
+     A secret merchant API key (sk_live_...) MUST NEVER live in browser JS.
+     Anyone can view-source it and drain the account.
+
+   Against a real server these routes are behind APIKeyAuth, so every call from
+   this page would return 401 — the demo only completes via its offline/mock
+   fallback. The correct hosted-checkout flow is:
+
+     1. Your server creates a checkout session and issues a SHORT-LIVED,
+        single-payment token (a "publishable"/session key), scoped to one
+        amount + reference + merchant, that CAN safely reach the browser.
+     2. The browser calls an UNAUTHENTICATED checkout-session route group with
+        that session token (not the secret key).
+     3. Your server (holding the secret key) settles / captures.
+
+   See README.md "Hosted checkout & auth model". If you intend these routes to
+   be browser-callable, split them into an unauthenticated checkout-session
+   group server-side — do NOT paste a secret key here. */
+
+const $ = id => document.getElementById(id);
+
+// Base URL is configurable: ?api=... query param, window.PAYCORE_API, else the
+// same origin the page is served from (works locally and on a hosted deploy).
+const API_BASE = new URLSearchParams(location.search).get('api')
+  || window.PAYCORE_API || location.origin;
+
+// Charge parameters. amount is a DECIMAL string (major units) — the gateway's
+// domain.CreatePaymentRequest.Amount is decimal.Decimal, serialized as "1290.00",
+// NOT integer minor units. AMOUNT_MINOR is only used for the ฿ display formatting.
+const AMOUNT_MINOR = 129000, CURRENCY = 'THB';
+const AMOUNT_DECIMAL = (AMOUNT_MINOR / 100).toFixed(2); // "1290.00"
+const REFERENCE = 'INV-2026-00841';
+// Demo merchant id (a real UUID); in production this comes from your session.
+const MERCHANT_ID = '00000000-0000-0000-0000-000000000001';
+
+// tokenize emulates the client-side vault: PAN + expiry + cvv -> single-use token.
+// The gateway detokenizes `payment_token` -> PAN internally (HSM-backed vault),
+// so we only transmit an opaque reference. Replace with your vault SDK in prod.
+async function tokenize({ pan, expMonth, expYear, cvv, name }) {
+  // A real vault returns a server-issued token; here we mint an opaque one.
+  const token = 'tok_' + crypto.randomUUID().replace(/-/g, '');
+  return { token, brand: detectBrand(pan), last4: pan.slice(-4), expMonth, expYear };
+}
+
+// Unwrap the standard { success, code, data, ... } API envelope.
+async function apiJson(res) {
+  let body = null;
+  try { body = await res.json(); } catch (_) {}
+  if (!res.ok || (body && body.success === false)) {
+    const msg = (body && (body.message || body.code)) || ('HTTP ' + res.status);
+    const err = new Error(msg); err.status = res.status; err.body = body; throw err;
+  }
+  return body ? body.data : null;
+}
+
+function detectBrand(num){
+  if(/^4/.test(num)) return 'VISA';
+  if(/^(5[1-5]|2[2-7])/.test(num)) return 'MASTERCARD';
+  if(/^3[47]/.test(num)) return 'AMEX';
+  return '';
+}
+function luhn(num){
+  let s=0, alt=false;
+  for(let i=num.length-1;i>=0;i--){
+    let d=+num[i];
+    if(alt){ d*=2; if(d>9) d-=9; }
+    s+=d; alt=!alt;
+  }
+  return num.length>=13 && s%10===0;
+}
+
+$('card').addEventListener('input', e=>{
+  let v = e.target.value.replace(/\D/g,'').slice(0,16);
+  e.target.value = v.replace(/(.{4})/g,'$1 ').trim();
+  $('cardBrand').textContent = detectBrand(v);
+});
+$('exp').addEventListener('input', e=>{
+  let v = e.target.value.replace(/\D/g,'').slice(0,4);
+  e.target.value = v.length>2 ? v.slice(0,2)+' / '+v.slice(2) : v;
+});
+$('cvv').addEventListener('input', e=>{ e.target.value=e.target.value.replace(/\D/g,''); });
+
+function validate(){
+  let ok=true;
+  const card=$('card').value.replace(/\s/g,'');
+  const [mm,yy]=$('exp').value.split('/').map(s=>s && s.trim());
+  $('cardErr').textContent=''; $('expErr').textContent='';
+  $('card').classList.remove('invalid'); $('exp').classList.remove('invalid'); $('cvv').classList.remove('invalid');
+
+  if(!luhn(card)){ $('card').classList.add('invalid'); $('cardErr').textContent='Enter a valid card number.'; ok=false; }
+  const m=+mm, y=2000+ +yy, now=new Date();
+  if(!m||m<1||m>12||!yy||new Date(y,m)<=now){ $('exp').classList.add('invalid'); $('expErr').textContent='Card expiry is invalid or past.'; ok=false; }
+  if($('cvv').value.length<3){ $('cvv').classList.add('invalid'); ok=false; }
+  return ok;
+}
+
+function overlay(html){ $('modalBody').innerHTML=html; $('overlay').classList.add('show'); }
+function close(){ $('overlay').classList.remove('show'); }
+
+// Prefer the shared PayCore money formatter; fall back to a local formatter if
+// paycore.js has not finished loading (it is deferred).
+function fmtBaht(dec){
+  if (window.PC && PC.moneyFromDecimal) return PC.moneyFromDecimal(dec);
+  return '฿' + Number(dec).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+
+// Reflect the terminal payment state returned by the gateway into the modal.
+function renderResult(p){
+  if(p.status === 'captured' || p.status === 'authorized'){
+    const verb = p.status === 'captured' ? 'charged' : 'authorized';
+    overlay('<div class="co-ok">✓</div><h3>Payment successful</h3>'+
+            '<p>'+fmtBaht(p.amount)+' '+verb+
+            (p.card_brand ? ' · '+p.card_brand.toUpperCase() : '')+
+            (p.card_last4 ? ' ••'+p.card_last4 : '')+' · '+p.id+'</p>'+
+            '<button class="pc-btn pc-btn-primary pc-btn-block" type="button" onclick="location.reload()">Done</button>');
+  } else {
+    // failed / voided / anything unexpected
+    overlay('<div class="co-fail">!</div><h3>Payment '+(p.status||'failed')+'</h3>'+
+            '<p>We could not complete this charge.</p>'+
+            '<button class="pc-btn pc-btn-primary pc-btn-block" type="button" onclick="location.reload()">Try again</button>');
+  }
+}
+
+// 3DS: the gateway returned requires_action + next_action_url. Show the challenge
+// step, drive the issuer ACS (here: open it), then POST the 3DS result back to
+// /v1/payments/{id}/3ds/return and re-read the payment. In a real integration
+// the ACS redirects the browser to return_url which hits that endpoint server-side.
+async function handleRequiresAction(p){
+  overlay('<div class="pc-spinner"></div><h3>Authenticating your card</h3>'+
+          '<p>Redirecting to 3-D Secure…</p>'+
+          (p.next_action_url ? '<p><a href="'+p.next_action_url+'" target="_blank" rel="noopener">Open 3-D Secure challenge</a></p>' : ''));
+
+  // Complete the challenge via the browser-return endpoint. transStatus=Y means
+  // the issuer authenticated the cardholder successfully. A failure here must
+  // surface a clear terminal state rather than leaving the spinner up forever.
+  try {
+    const form = new URLSearchParams({ transStatus: 'Y' });
+    const res = await fetch(API_BASE + '/v1/payments/' + p.id + '/3ds/return', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: form.toString(),
+    });
+    const done = await apiJson(res);
+    renderResult(done);
+  } catch (err) {
+    overlay('<div class="co-fail">!</div><h3>Authentication failed</h3>'+
+            '<p>'+ (err.message || 'We could not complete 3-D Secure.') +'</p>'+
+            '<button class="pc-btn pc-btn-primary pc-btn-block" type="button" onclick="location.reload()">Try again</button>');
+  }
+}
+
+$('form').addEventListener('submit', async e=>{
+  e.preventDefault();
+  if(!validate()) return;
+  $('pay').disabled=true;
+
+  const pan = $('card').value.replace(/\s/g,'');
+  const [mm, yy] = $('exp').value.split('/').map(s=>s && s.trim());
+
+  try {
+    // 1) Tokenize client-side — raw PAN never leaves the browser for our API.
+    overlay('<div class="pc-spinner"></div><h3>Securing your card</h3><p>Tokenizing…</p>');
+    const tok = await tokenize({
+      pan, expMonth: +mm, expYear: 2000 + +yy, cvv: $('cvv').value, name: $('name').value,
+    });
+
+    // 2) Create the payment with the single-use token + an Idempotency-Key.
+    overlay('<div class="pc-spinner"></div><h3>Confirming payment</h3><p>Do not close this window.</p>');
+    const res = await fetch(API_BASE + '/v1/payments', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': crypto.randomUUID(), // safe to retry without double-charge
+      },
+      body: JSON.stringify({
+        merchant_id: MERCHANT_ID,
+        amount: AMOUNT_DECIMAL,      // decimal string, e.g. "1290.00"
+        currency: CURRENCY,
+        payment_token: tok.token,    // vault token, not the PAN
+        capture: true,               // true = charge; false = authorize only
+        reference: REFERENCE,
+        return_url: location.origin + '/checkout/index.html', // where 3DS returns
+      }),
+    });
+    const p = await apiJson(res);
+
+    // 3) Reflect the returned state.
+    if (p.status === 'requires_action') {
+      await handleRequiresAction(p); // 3DS challenge step
+    } else {
+      renderResult(p);               // authorized / captured / failed
+    }
+  } catch (err) {
+    overlay('<div class="co-fail">!</div><h3>Payment failed</h3><p>'+ (err.message || 'Something went wrong') +'</p>'+
+            '<button class="pc-btn pc-btn-primary pc-btn-block" type="button" onclick="location.reload()">Try again</button>');
+    $('pay').disabled=false;
+  }
+});
+</script>
+</body>
+</html>

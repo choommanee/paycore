@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PayCore — Create a sandbox account</title>
+<link rel="stylesheet" href="/assets/paycore.css" />
+<style>
+  /* Signup-local extras layered on top of paycore.css (no build step). */
+  body{min-height:100vh}
+  .pc-auth{display:flex;min-height:100vh;align-items:center;justify-content:center;padding:var(--pc-s6)}
+
+  /* the signup card reuses the login shell width but is a touch wider */
+  .pc-signup{width:100%;max-width:480px}
+
+  /* prominent TEST MODE badge */
+  .pc-testmode{
+    display:inline-flex;align-items:center;gap:8px;
+    background:var(--pc-warn-bg);color:var(--pc-warn);
+    border:1px solid rgba(138,90,11,.24);border-radius:var(--pc-r-pill);
+    font-size:var(--pc-fs-12);font-weight:600;letter-spacing:.01em;
+    padding:6px 12px;margin-bottom:var(--pc-s4);
+  }
+  .pc-testmode svg{width:15px;height:15px}
+
+  /* one-time api key reveal box (same idiom as the dashboard) */
+  .pc-secret{
+    display:flex;align-items:center;gap:var(--pc-s2);
+    background:var(--pc-surface-2);border:1px solid var(--pc-line);border-radius:var(--pc-r);
+    padding:10px 12px;font-family:var(--pc-font-mono);font-size:var(--pc-fs-12);
+    word-break:break-all;color:var(--pc-ink);
+  }
+  .pc-keywarn{
+    background:var(--pc-danger-bg);color:var(--pc-danger);
+    border:1px solid rgba(163,45,45,.22);border-radius:var(--pc-r);
+    padding:10px 12px;font-size:var(--pc-fs-13);margin-bottom:var(--pc-s4);
+  }
+  .pc-signup-alt{margin-top:var(--pc-s4);text-align:center;font-size:var(--pc-fs-13);color:var(--pc-muted)}
+  .pc-signup-alt a{color:var(--pc-accent);text-decoration:none;font-weight:600}
+  .pc-signup-alt a:hover{text-decoration:underline}
+  .pc-row-2{display:grid;grid-template-columns:1fr 1fr;gap:var(--pc-s3)}
+  @media (max-width:520px){ .pc-row-2{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+
+<div class="pc-auth">
+  <!-- ============================ SIGNUP CARD ============================ -->
+  <form class="pc-login pc-signup" id="signupForm" novalidate>
+    <div class="pc-login-brand" data-pc-logo></div>
+
+    <div class="pc-testmode" title="Sandbox test environment">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6M10 3v6.5L5.5 18a2 2 0 0 0 1.8 3h9.4a2 2 0 0 0 1.8-3L14 9.5V3"/></svg>
+      TEST MODE — sandbox, no real money
+    </div>
+
+    <h2>Create a sandbox account</h2>
+    <p class="pc-login-sub">Spin up a PayCore test merchant in seconds. You'll receive an API key you can use with the dashboard and checkout — instantly, no card required.</p>
+
+    <div class="pc-form">
+      <div class="pc-field">
+        <label class="pc-label" for="inName">Business name <span class="pc-req">*</span></label>
+        <input class="pc-input" id="inName" type="text" autocomplete="organization"
+               placeholder="Acme Store Co., Ltd." maxlength="200" />
+        <div class="pc-error" id="nameErr"></div>
+      </div>
+
+      <div class="pc-row-2">
+        <div class="pc-field">
+          <label class="pc-label" for="inMcc">Merchant category (MCC)</label>
+          <select class="pc-select" id="inMcc">
+            <option value="5999" selected>5999 — Retail / general</option>
+            <option value="5411">5411 — Grocery / supermarket</option>
+            <option value="5812">5812 — Restaurants / dining</option>
+            <option value="5814">5814 — Fast food</option>
+            <option value="5691">5691 — Clothing / apparel</option>
+            <option value="5732">5732 — Electronics</option>
+            <option value="7372">7372 — Software / SaaS</option>
+            <option value="4816">4816 — Digital / online services</option>
+            <option value="7997">7997 — Membership / clubs</option>
+            <option value="5399">5399 — Miscellaneous</option>
+          </select>
+          <div class="pc-hint">Used for reporting only in sandbox.</div>
+        </div>
+
+        <div class="pc-field">
+          <label class="pc-label" for="inCur">Settlement currency</label>
+          <select class="pc-select" id="inCur">
+            <option value="THB" selected>THB — Thai Baht</option>
+            <option value="USD">USD — US Dollar</option>
+            <option value="SGD">SGD — Singapore Dollar</option>
+            <option value="EUR">EUR — Euro</option>
+            <option value="GBP">GBP — British Pound</option>
+            <option value="JPY">JPY — Japanese Yen</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- success reveal (hidden until onboarding succeeds) -->
+      <div id="reveal" style="display:none">
+        <div class="pc-keywarn">
+          <b>Save this API key now.</b> It is shown once and cannot be retrieved again. If you lose it you'll need to sign up again or rotate it from the dashboard.
+        </div>
+        <div class="pc-label" style="margin-bottom:6px">Your sandbox API key</div>
+        <div class="pc-secret" id="keyBox"></div>
+        <div style="margin-top:var(--pc-s4)">
+          <button class="pc-btn pc-btn-primary pc-btn-lg pc-btn-block" type="button" id="goDashboard">
+            Go to Dashboard
+          </button>
+        </div>
+      </div>
+
+      <!-- submit (hidden after success) -->
+      <button class="pc-btn pc-btn-primary pc-btn-lg pc-btn-block" type="submit" id="submitBtn">
+        Create sandbox account
+      </button>
+    </div>
+
+    <div class="pc-signup-alt" id="loginLink">
+      Already have an API key? <a href="/dashboard">Merchant login</a>
+    </div>
+    <div class="pc-trust">🔒 Test-grade signup: no email verification or KYC. Your key is stored only in this browser (localStorage).</div>
+  </form>
+</div>
+
+<script src="/assets/paycore.js" defer></script>
+<script defer>
+document.addEventListener('DOMContentLoaded', function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+
+  var form = $('signupForm');
+  var submitBtn = $('submitBtn');
+  var reveal = $('reveal');
+  var keyBox = $('keyBox');
+
+  // Copy-to-clipboard (same idiom as the dashboard: [data-copy] delegation).
+  document.body.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-copy]');
+    if (!b) return;
+    var v = b.getAttribute('data-copy');
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(v).then(function () {
+        PC.toast('API key copied to clipboard', { type: 'success', duration: 1800 });
+      }).catch(function () { PC.toast('Copy failed — select and copy manually', { type: 'error' }); });
+    }
+  });
+
+  function copyBtn(value) {
+    return '<button class="pc-btn pc-btn-secondary pc-btn-sm" type="button" data-copy="' + PC.escape(value) + '">Copy</button>';
+  }
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    $('nameErr').textContent = '';
+
+    var name = ($('inName').value || '').trim();
+    if (!name) {
+      $('nameErr').textContent = 'Enter your business name.';
+      $('inName').classList.add('invalid');
+      return;
+    }
+    $('inName').classList.remove('invalid');
+
+    var payload = {
+      name: name,
+      mcc: $('inMcc').value,
+      settlement_currency: $('inCur').value,
+    };
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Creating…';
+
+    // Public onboarding endpoint — no auth. auth:false skips injecting any stored key.
+    PC.post('/v1/merchants', payload, { auth: false }).then(function (cred) {
+      var key = cred && cred.api_key;
+      if (!key) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Create sandbox account';
+        PC.toast('Account created but no API key was returned — try the dashboard login.', { type: 'warn' });
+        return;
+      }
+      // Reveal the key once, wire the dashboard hand-off.
+      keyBox.innerHTML = '<span style="flex:1">' + PC.escape(key) + '</span>' + copyBtn(key);
+      submitBtn.style.display = 'none';
+      $('loginLink').style.display = 'none';
+      reveal.style.display = 'block';
+      PC.toast('Sandbox account created', { type: 'success', title: 'Welcome to PayCore' });
+
+      $('goDashboard').addEventListener('click', function () {
+        // Store the key under the SAME localStorage key the dashboard reads so it
+        // auto-logs-in. PC.setKey persists 'paycore.key'; the dashboard boots off it.
+        PC.setKey(key);
+        window.location.href = '/dashboard/';
+      });
+    }).catch(function (err) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Create sandbox account';
+      if (err && err.status === 429) {
+        PC.toast('Too many signups from this network. Please wait a while and try again.', {
+          type: 'warn', title: 'Rate limited', duration: 6000,
+        });
+        return;
+      }
+      PC.toast(err && err.message ? err.message : 'Could not create your account. Please try again.', {
+        type: 'error', title: 'Signup failed',
+      });
+    });
+  });
+});
+</script>
+</body>
+</html>

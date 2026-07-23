@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex,nofollow" />
+<title>PayCore — Admin Console</title>
+<link rel="stylesheet" href="/assets/paycore.css" />
+<style>
+  /* ------ Admin skin: darker, unmistakably internal ------------------------ */
+  :root{
+    --adm-header:#0b1220; --adm-header-2:#111a2e;
+    --adm-ribbon:#a32d2d; --adm-accent:#f2b705;
+  }
+  /* Dark operator top bar so admins never confuse this with the merchant app */
+  .adm-nav{
+    height:var(--pc-nav-h);position:sticky;top:0;z-index:40;flex:none;
+    display:flex;align-items:center;gap:var(--pc-s5);padding:0 var(--pc-s6);
+    background:linear-gradient(90deg,var(--adm-header),var(--adm-header-2));
+    border-bottom:1px solid #1e2a44;box-shadow:0 1px 0 rgba(255,255,255,.04),var(--pc-sh-2);
+  }
+  .adm-nav .pc-brand-name{color:#fff!important}
+  .adm-nav .pc-brand-name span{color:#7fb2e6!important}
+  .adm-ribbon{
+    display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:var(--pc-r-pill);
+    font-size:var(--pc-fs-11);font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+    background:var(--adm-ribbon);color:#fff;box-shadow:var(--pc-sh-1);
+  }
+  .adm-ribbon::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--adm-accent)}
+  .adm-nav-spacer{flex:1}
+  .adm-nav-meta{display:flex;align-items:center;gap:var(--pc-s4);color:#aeb9cc;font-size:var(--pc-fs-12)}
+  .adm-nav-meta .pc-code{background:#1a2540;border-color:#26324f;color:#cdd7e8}
+  .adm-nav .pc-btn-ghost{color:#cdd7e8}
+  .adm-nav .pc-btn-ghost:hover{background:#1a2540;color:#fff}
+  /* thin caution stripe under the header */
+  .adm-stripe{height:3px;flex:none;background:repeating-linear-gradient(45deg,var(--adm-accent),var(--adm-accent) 10px,#0b1220 10px,#0b1220 20px);opacity:.9}
+
+  .adm-login-badge{
+    display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:var(--pc-r-pill);
+    font-size:var(--pc-fs-11);font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+    background:var(--pc-danger-bg);color:var(--pc-danger);margin-bottom:var(--pc-s4);
+  }
+  .adm-login{border-top:3px solid var(--adm-ribbon)}
+
+  .adm-kri .pc-stat-value{color:var(--pc-ink)}
+  .adm-kri .warn .pc-stat-value{color:var(--pc-warn)}
+  .adm-kri .danger .pc-stat-value{color:var(--pc-danger)}
+  .adm-immutable{display:inline-flex;align-items:center;gap:5px;color:var(--pc-muted);font-size:var(--pc-fs-12)}
+  .adm-immutable svg{width:14px;height:14px}
+  .adm-meta-cell{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+</style>
+</head>
+<body>
+<div class="pc-app">
+
+  <!-- =================================================================== -->
+  <!-- LOGIN (shown until an admin key validates against /v1/admin/stats)  -->
+  <!-- =================================================================== -->
+  <div id="auth" class="pc-auth pc-hide">
+    <div class="pc-login adm-login">
+      <div class="pc-login-brand" data-pc-logo></div>
+      <span class="adm-login-badge">Internal · Operator Console</span>
+      <h2>Admin sign-in</h2>
+      <div class="pc-login-sub">Paste your platform admin key. It is validated against the live API and stored in this browser only.</div>
+      <form class="pc-form" id="loginForm" novalidate>
+        <div class="pc-field">
+          <label class="pc-label" for="inBase">API base URL <span class="pc-muted">(leave blank = same site)</span></label>
+          <input class="pc-input" id="inBase" type="text" placeholder="(same origin)" autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="pc-field">
+          <label class="pc-label" for="inKey">Admin key <span class="pc-req">*</span></label>
+          <input class="pc-input pc-mono" id="inKey" type="password" placeholder="X-Admin-Key" autocomplete="off" spellcheck="false" />
+          <div class="pc-error" id="loginErr"></div>
+        </div>
+        <button class="pc-btn pc-btn-primary pc-btn-lg pc-btn-block" id="loginBtn" type="submit">Unlock console</button>
+      </form>
+      <div class="pc-trust">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        Key never leaves this browser
+      </div>
+    </div>
+  </div>
+
+  <!-- =================================================================== -->
+  <!-- CONSOLE                                                             -->
+  <!-- =================================================================== -->
+  <div id="console" class="pc-hide">
+    <nav class="adm-nav">
+      <span class="pc-brand" data-pc-logo></span>
+      <span class="adm-ribbon">Admin</span>
+      <span class="adm-nav-spacer"></span>
+      <div class="adm-nav-meta">
+        <span>base <code class="pc-code" id="metaBase"></code></span>
+        <button class="pc-btn pc-btn-ghost pc-btn-sm" id="btnRefresh" title="Reload data">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+          Refresh
+        </button>
+        <button class="pc-btn pc-btn-ghost pc-btn-sm" id="btnLogout">Sign out</button>
+      </div>
+    </nav>
+    <div class="adm-stripe"></div>
+
+    <main class="pc-main">
+      <div class="pc-container">
+        <div class="pc-page-head">
+          <div>
+            <div class="pc-page-title">Platform operator console</div>
+            <div class="pc-page-sub">Cross-merchant administration · read-only reporting · onboarding</div>
+          </div>
+        </div>
+
+        <div class="pc-tabs" id="tabs">
+          <button class="pc-tab active" data-tab="merchants" type="button">Merchants</button>
+          <button class="pc-tab" data-tab="kri" type="button">Platform KRI</button>
+          <button class="pc-tab" data-tab="disputes" type="button">Disputes</button>
+          <button class="pc-tab" data-tab="audit" type="button">Audit log</button>
+          <button class="pc-tab" data-tab="recon" type="button">Reconciliation</button>
+        </div>
+
+        <div id="view"><div class="pc-center" style="padding:48px"><div class="pc-spinner" style="margin:0 auto"></div></div></div>
+      </div>
+    </main>
+  </div>
+
+</div>
+
+<script src="/assets/paycore.js" defer></script>
+<script defer>
+(function () {
+  'use strict';
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var LS_ADMIN = 'paycore.adminKey';
+
+  function getKey() { try { return localStorage.getItem(LS_ADMIN) || ''; } catch (_) { return ''; } }
+  function setKey(k) { try { k ? localStorage.setItem(LS_ADMIN, k) : localStorage.removeItem(LS_ADMIN); } catch (_) {} }
+
+  // Admin endpoints authenticate with X-Admin-Key, NOT the merchant X-API-Key
+  // that PC.api injects by default — so we disable that and set our own header.
+  function admin(path, opts) {
+    opts = opts || {};
+    var headers = Object.assign({ 'X-Admin-Key': getKey() }, opts.headers || {});
+    return PC.api(path, Object.assign({}, opts, { auth: false, headers: headers }));
+  }
+
+  var LOCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
+
+  // Friendly, non-broken fallback for any endpoint that 404s or errors.
+  function degrade(err, opts) {
+    opts = opts || {};
+    var notFound = err && (err.status === 404 || err.status === 501);
+    return PC.empty({
+      title: notFound ? (opts.soon || 'Coming soon') : (opts.title || 'Unable to load'),
+      message: notFound
+        ? (opts.soonMsg || 'This endpoint is not available on the connected API yet.')
+        : (opts.errMsg || ((err && err.message) ? err.message : 'The request failed. Try refreshing.')),
+    });
+  }
+
+  function loading() { return '<div class="pc-center" style="padding:40px"><div class="pc-spinner" style="margin:0 auto"></div></div>'; }
+  function pct(f) { return (Number(f || 0) * 100).toFixed(2) + '%'; }
+  function shortId(v) { v = String(v || ''); return v.length > 10 ? v.slice(0, 8) + '…' : v; }
+
+  /* ================================================================ LOGIN */
+  function showAuth(msg) {
+    $('#console').classList.add('pc-hide');
+    $('#auth').classList.remove('pc-hide');
+    var cfg = PC.config();
+    $('#inBase').value = (cfg.base && cfg.base !== location.origin) ? cfg.base : '';
+    $('#inKey').value = '';
+    $('#loginErr').textContent = msg || '';
+    $('#inKey').focus();
+  }
+
+  function showConsole() {
+    $('#auth').classList.add('pc-hide');
+    $('#console').classList.remove('pc-hide');
+    $('#metaBase').textContent = PC.config().base;
+    render(current);
+  }
+
+  $('#loginForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var base = $('#inBase').value.trim();
+    var key = $('#inKey').value.trim();
+    var errEl = $('#loginErr');
+    errEl.textContent = '';
+    if (!key) { errEl.textContent = 'Admin key is required.'; return; }
+    if (base) PC.setBase(base);
+    setKey(key);
+    var btn = $('#loginBtn');
+    btn.disabled = true; btn.textContent = 'Validating…';
+    // Validate by hitting a real admin endpoint.
+    admin('/v1/admin/stats').then(function () {
+      btn.disabled = false; btn.textContent = 'Unlock console';
+      PC.toast('Admin console unlocked', { type: 'success' });
+      showConsole();
+    }).catch(function (err) {
+      btn.disabled = false; btn.textContent = 'Unlock console';
+      setKey('');
+      if (err && (err.status === 401 || err.status === 403)) {
+        errEl.textContent = 'Invalid admin key.';
+      } else if (err && err.status === 404) {
+        errEl.textContent = 'Admin endpoints not found on this API. Check the base URL.';
+      } else {
+        errEl.textContent = 'Could not reach the API: ' + (err && err.message ? err.message : 'network error') + '.';
+      }
+    });
+  });
+
+  $('#btnLogout') && $('#btnLogout').addEventListener('click', function () {
+    setKey('');
+    showAuth('Signed out.');
+  });
+  $('#btnRefresh') && $('#btnRefresh').addEventListener('click', function () { render(current, true); });
+
+  /* ================================================================= TABS */
+  var current = 'merchants';
+  var tabsEl = $('#tabs');
+  tabsEl.addEventListener('click', function (e) {
+    var b = e.target.closest('.pc-tab');
+    if (!b) return;
+    current = b.getAttribute('data-tab');
+    Array.prototype.forEach.call(tabsEl.querySelectorAll('.pc-tab'), function (t) {
+      t.classList.toggle('active', t === b);
+    });
+    render(current);
+  });
+
+  function render(tab, force) {
+    var host = $('#view');
+    host.innerHTML = loading();
+    var fn = TABS[tab] || TABS.merchants;
+    // guard: re-check we still hold a key
+    if (!getKey()) { showAuth(); return; }
+    fn(host, force);
+  }
+
+  /* ============================================================ MERCHANTS */
+  function tabMerchants(host) {
+    admin('/v1/admin/merchants').then(function (rows) {
+      rows = rows || [];
+      var onboard =
+        '<div class="pc-spread" style="margin-bottom:var(--pc-s5)">' +
+          '<div><h3 style="font-size:var(--pc-fs-16)">Merchants</h3>' +
+          '<div class="pc-muted" style="font-size:var(--pc-fs-12)">' + rows.length + ' onboarded</div></div>' +
+          '<button class="pc-btn pc-btn-primary" id="btnOnboard">' +
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>' +
+            'Onboard merchant</button>' +
+        '</div>';
+
+      var body;
+      if (!rows.length) {
+        body = '<div class="pc-table-wrap">' + PC.empty({ title: 'No merchants yet', message: 'Onboard your first merchant to get started.' }) + '</div>';
+      } else {
+        var trs = rows.map(function (m) {
+          return '<tr>' +
+            '<td class="pc-mono">' + PC.escape(shortId(m.id)) + '</td>' +
+            '<td>' + PC.escape(m.name || '—') + '</td>' +
+            '<td>' + PC.badge(m.status) + '</td>' +
+            '<td>' + PC.escape(m.mcc || '—') + '</td>' +
+            '<td>' + PC.escape(m.settlement_currency || '—') + '</td>' +
+            '<td class="pc-nowrap">' + PC.escape(PC.fmtDate(m.created_at)) + '</td>' +
+          '</tr>';
+        }).join('');
+        body =
+          '<div class="pc-table-wrap"><div class="pc-table-scroll"><table class="pc-table">' +
+          '<thead><tr><th>ID</th><th>Name</th><th>Status</th><th>MCC</th><th>Currency</th><th>Onboarded</th></tr></thead>' +
+          '<tbody>' + trs + '</tbody></table></div></div>';
+      }
+      host.innerHTML = onboard + body;
+      var b = $('#btnOnboard'); if (b) b.addEventListener('click', openOnboard);
+    }).catch(function (err) {
+      host.innerHTML = degrade(err, { title: 'Unable to load merchants' });
+    });
+  }
+
+  function openOnboard() {
+    var form = PC.el('form', { class: 'pc-form', id: 'onboardForm', novalidate: 'novalidate' });
+    form.innerHTML =
+      '<div class="pc-field"><label class="pc-label" for="obName">Legal / display name <span class="pc-req">*</span></label>' +
+        '<input class="pc-input" id="obName" placeholder="Acme Store Co., Ltd." /></div>' +
+      '<div class="pc-row">' +
+        '<div class="pc-field"><label class="pc-label" for="obMcc">MCC</label>' +
+          '<input class="pc-input pc-mono" id="obMcc" maxlength="4" placeholder="5732" /></div>' +
+        '<div class="pc-field"><label class="pc-label" for="obCur">Settlement currency <span class="pc-req">*</span></label>' +
+          '<select class="pc-select" id="obCur"><option value="THB">THB</option><option value="USD">USD</option><option value="SGD">SGD</option><option value="JPY">JPY</option></select></div>' +
+      '</div>' +
+      '<div class="pc-error" id="obErr"></div>';
+
+    var foot = PC.el('div');
+    var cancel = PC.el('button', { class: 'pc-btn pc-btn-secondary', type: 'button', text: 'Cancel' });
+    var submit = PC.el('button', { class: 'pc-btn pc-btn-primary', type: 'submit', text: 'Create merchant' });
+    submit.setAttribute('form', 'onboardForm');
+    foot.appendChild(cancel); foot.appendChild(submit);
+
+    var m = PC.modal({ title: 'Onboard merchant', body: form, footer: foot });
+    cancel.addEventListener('click', m.close);
+
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var name = $('#obName').value.trim();
+      var mcc = $('#obMcc').value.trim();
+      var cur = $('#obCur').value;
+      var errEl = $('#obErr'); errEl.textContent = '';
+      if (!name) { errEl.textContent = 'Name is required.'; return; }
+      if (mcc && !/^\d{4}$/.test(mcc)) { errEl.textContent = 'MCC must be 4 digits.'; return; }
+      submit.disabled = true; submit.textContent = 'Creating…';
+      var payload = { name: name, settlement_currency: cur };
+      if (mcc) payload.mcc = mcc;
+      // POST /v1/merchants is open (no key needed yet); send without admin/api key.
+      PC.post('/v1/merchants', payload, { auth: false }).then(function (res) {
+        m.close();
+        showCredential(res);
+        render('merchants', true);
+      }).catch(function (err) {
+        submit.disabled = false; submit.textContent = 'Create merchant';
+        errEl.textContent = (err && err.message) ? err.message : 'Onboarding failed.';
+      });
+    });
+  }
+
+  // The plaintext API key is returned exactly once — surface it clearly.
+  function showCredential(res) {
+    res = res || {};
+    var key = res.api_key || '';
+    var body =
+      '<p class="pc-muted" style="margin-top:0">Merchant <b>' + PC.escape(res.name || '') + '</b> created. ' +
+      'This API key is shown <b>once</b> — copy it now.</p>' +
+      '<div class="pc-field"><label class="pc-label">API key</label>' +
+        '<div class="pc-input-group">' +
+          '<input class="pc-input pc-mono" id="credKey" readonly value="' + PC.escape(key) + '" />' +
+        '</div></div>';
+    var foot = PC.el('div');
+    var copy = PC.el('button', { class: 'pc-btn pc-btn-secondary', type: 'button', text: 'Copy key' });
+    var ok = PC.el('button', { class: 'pc-btn pc-btn-primary', type: 'button', text: 'Done' });
+    foot.appendChild(copy); foot.appendChild(ok);
+    var m = PC.modal({ title: 'API key (shown once)', body: body, footer: foot, closeOnBackdrop: false });
+    ok.addEventListener('click', m.close);
+    copy.addEventListener('click', function () {
+      var inp = $('#credKey'); inp.select();
+      var done = function () { PC.toast('API key copied', { type: 'success' }); };
+      if (navigator.clipboard) navigator.clipboard.writeText(key).then(done, function () { try { document.execCommand('copy'); done(); } catch (_) {} });
+      else { try { document.execCommand('copy'); done(); } catch (_) {} }
+    });
+  }
+
+  /* ================================================================== KRI */
+  function tile(label, value, cls) {
+    return '<div class="pc-stat ' + (cls || '') + '">' +
+      '<div class="pc-stat-label">' + PC.escape(label) + '</div>' +
+      '<div class="pc-stat-value">' + value + '</div></div>';
+  }
+  function tabKRI(host) {
+    admin('/v1/admin/stats').then(function (s) {
+      s = s || {};
+      var by = s.byStatus || {};
+      var fraud = s.chargebackRatio;
+      var fraudCls = Number(fraud) >= 0.01 ? 'danger' : (Number(fraud) >= 0.005 ? 'warn' : '');
+      var refundCls = Number(s.refundRatio) >= 0.1 ? 'warn' : '';
+      var html =
+        '<div class="pc-stats adm-kri" style="margin-bottom:var(--pc-s6)">' +
+          tile('Total captured volume', PC.money(s.volumeMinor)) +
+          tile('Transactions', Number(s.count || 0).toLocaleString()) +
+          tile('Merchants', Number(s.merchantCount || 0).toLocaleString()) +
+          tile('Success rate', pct(s.successRate)) +
+          tile('Refund ratio', pct(s.refundRatio), refundCls) +
+          tile('Chargeback / fraud ratio', pct(s.chargebackRatio), fraudCls) +
+        '</div>' +
+        '<div class="pc-card"><div class="pc-card-head"><h4>Volume by status</h4></div>' +
+        '<div class="pc-card-body"><div class="pc-table-scroll"><table class="pc-table">' +
+        '<thead><tr><th>Status</th><th class="pc-num">Count</th></tr></thead><tbody>' +
+          '<tr><td>' + PC.badge('authorized') + '</td><td class="pc-num">' + Number(by.authorized || 0).toLocaleString() + '</td></tr>' +
+          '<tr><td>' + PC.badge('captured') + '</td><td class="pc-num">' + Number(by.captured || 0).toLocaleString() + '</td></tr>' +
+          '<tr><td>' + PC.badge('refunded') + '</td><td class="pc-num">' + Number(by.refunded || 0).toLocaleString() + '</td></tr>' +
+          '<tr><td>' + PC.badge('failed') + '</td><td class="pc-num">' + Number(by.failed || 0).toLocaleString() + '</td></tr>' +
+        '</tbody></table></div></div></div>';
+      host.innerHTML = html;
+    }).catch(function (err) {
+      host.innerHTML = degrade(err, { title: 'Unable to load platform KRI' });
+    });
+  }
+
+  /* ============================================================= DISPUTES */
+  function tabDisputes(host) {
+    admin('/v1/admin/disputes').then(function (rows) {
+      rows = rows || [];
+      if (!rows.length) {
+        host.innerHTML = '<div class="pc-table-wrap">' + PC.empty({ title: 'No disputes', message: 'No chargebacks or disputes have been filed across the platform.' }) + '</div>';
+        return;
+      }
+      var trs = rows.map(function (d) {
+        return '<tr>' +
+          '<td class="pc-mono">' + PC.escape(shortId(d.id)) + '</td>' +
+          '<td class="pc-mono">' + PC.escape(shortId(d.merchant_id)) + '</td>' +
+          '<td class="pc-mono">' + PC.escape(shortId(d.payment_id)) + '</td>' +
+          '<td class="pc-num">' + PC.escape(PC.moneyFromDecimal(d.amount, { currency: d.currency, code: false })) + ' ' + PC.escape(d.currency || '') + '</td>' +
+          '<td>' + PC.badge(d.status) + '</td>' +
+          '<td>' + PC.escape(d.reason || '—') + '</td>' +
+          '<td class="pc-nowrap">' + PC.escape(PC.fmtDate(d.opened_at || d.created_at)) + '</td>' +
+        '</tr>';
+      }).join('');
+      host.innerHTML =
+        '<div class="pc-table-wrap"><div class="pc-table-scroll"><table class="pc-table">' +
+        '<thead><tr><th>Dispute</th><th>Merchant</th><th>Payment</th><th class="pc-num">Amount</th><th>Status</th><th>Reason</th><th>Opened</th></tr></thead>' +
+        '<tbody>' + trs + '</tbody></table></div></div>';
+    }).catch(function (err) {
+      host.innerHTML = degrade(err, { title: 'Unable to load disputes' });
+    });
+  }
+
+  /* ============================================================ AUDIT LOG */
+  function tabAudit(host) {
+    admin('/v1/admin/audit-log?limit=200').then(function (rows) {
+      rows = rows || [];
+      var head =
+        '<div class="pc-spread" style="margin-bottom:var(--pc-s5)">' +
+          '<div><h3 style="font-size:var(--pc-fs-16)">Audit log</h3>' +
+          '<div class="adm-immutable">' + LOCK + ' Immutable · append-only event trail</div></div>' +
+        '</div>';
+      if (!rows.length) {
+        host.innerHTML = head + '<div class="pc-table-wrap">' + PC.empty({ title: 'No audit events', message: 'Administrative actions will appear here as they occur.' }) + '</div>';
+        return;
+      }
+      var trs = rows.map(function (a) {
+        var meta = '';
+        if (a.metadata != null) {
+          try { meta = typeof a.metadata === 'string' ? a.metadata : JSON.stringify(a.metadata); } catch (_) { meta = ''; }
+        }
+        return '<tr>' +
+          '<td class="pc-nowrap">' + PC.escape(PC.fmtDate(a.created_at)) + '</td>' +
+          '<td>' + PC.escape(a.actor || '—') + '</td>' +
+          '<td><span class="pc-pill">' + PC.escape(a.action || '—') + '</span></td>' +
+          '<td>' + PC.escape(a.entity_type || '—') + '</td>' +
+          '<td class="pc-mono">' + PC.escape(shortId(a.entity_id)) + '</td>' +
+          '<td class="pc-mono adm-meta-cell" title="' + PC.escape(meta) + '">' + PC.escape(meta || '—') + '</td>' +
+        '</tr>';
+      }).join('');
+      host.innerHTML = head +
+        '<div class="pc-table-wrap"><div class="pc-table-scroll"><table class="pc-table">' +
+        '<thead><tr><th>Timestamp</th><th>Actor</th><th>Action</th><th>Entity</th><th>Entity ID</th><th>Metadata</th></tr></thead>' +
+        '<tbody>' + trs + '</tbody></table></div></div>';
+    }).catch(function (err) {
+      host.innerHTML = degrade(err, { title: 'Unable to load audit log' });
+    });
+  }
+
+  /* ======================================================= RECONCILIATION */
+  // Backed by GET /v1/admin/settlements (platform-wide payouts). Renders a
+  // gross/refunded/fee/net summary + payout table; degrades to a "coming soon"
+  // panel when there are no payouts yet (settlement worker runs hourly).
+  function tabRecon(host) {
+    admin('/v1/admin/settlements').then(function (rows) {
+      rows = rows || [];
+      if (!rows.length) { host.innerHTML = reconSoon(); return; }
+      var gross = 0, net = 0, fee = 0, refunded = 0;
+      var trs = rows.map(function (r) {
+        gross += Number(r.gross_minor || 0); net += Number(r.net_minor || 0);
+        fee += Number(r.fee_minor || 0); refunded += Number(r.refunded_minor || 0);
+        return '<tr>' +
+          '<td class="pc-mono">' + PC.escape(shortId(r.id)) + '</td>' +
+          '<td>' + PC.escape(r.currency || '—') + '</td>' +
+          '<td class="pc-num">' + PC.money(r.gross_minor) + '</td>' +
+          '<td class="pc-num">' + PC.money(r.refunded_minor) + '</td>' +
+          '<td class="pc-num">' + PC.money(r.fee_minor) + '</td>' +
+          '<td class="pc-num">' + PC.money(r.net_minor) + '</td>' +
+          '<td class="pc-num">' + Number(r.payment_count || 0).toLocaleString() + '</td>' +
+          '<td>' + PC.badge(r.status) + '</td>' +
+          '<td class="pc-nowrap">' + PC.escape(PC.fmtDate(r.created_at)) + '</td>' +
+        '</tr>';
+      }).join('');
+      host.innerHTML =
+        '<div class="pc-stats" style="margin-bottom:var(--pc-s6)">' +
+          tile('Gross', PC.money(gross)) + tile('Refunded', PC.money(refunded)) +
+          tile('Fees', PC.money(fee)) + tile('Net settled', PC.money(net)) +
+        '</div>' +
+        '<div class="pc-table-wrap"><div class="pc-table-scroll"><table class="pc-table">' +
+        '<thead><tr><th>Payout</th><th>Ccy</th><th class="pc-num">Gross</th><th class="pc-num">Refunded</th><th class="pc-num">Fees</th><th class="pc-num">Net</th><th class="pc-num">Txns</th><th>Status</th><th>Created</th></tr></thead>' +
+        '<tbody>' + trs + '</tbody></table></div></div>';
+    }).catch(function () {
+      host.innerHTML = reconSoon();
+    });
+  }
+  function reconSoon() {
+    return '<div class="pc-card"><div class="pc-card-body">' + PC.empty({
+      title: 'Reconciliation — coming soon',
+      message: 'A platform-wide settlement / ledger summary is not exposed by the connected API yet. Per-merchant settlements are available in the merchant dashboard.',
+    }) + '</div></div>';
+  }
+
+  var TABS = {
+    merchants: tabMerchants,
+    kri: tabKRI,
+    disputes: tabDisputes,
+    audit: tabAudit,
+    recon: tabRecon,
+  };
+
+  /* ================================================================= BOOT */
+  function boot() {
+    if (!getKey()) { showAuth(); return; }
+    // Re-validate the stored key against the live API before showing anything.
+    admin('/v1/admin/stats').then(function () {
+      showConsole();
+    }).catch(function (err) {
+      if (err && (err.status === 401 || err.status === 403)) { setKey(''); showAuth('Session expired — sign in again.'); }
+      else if (err && err.status === 404) { setKey(''); showAuth('Admin endpoints not found. Check the base URL.'); }
+      else {
+        // Network hiccup: keep the key, still show the console (tabs degrade gracefully).
+        showConsole();
+      }
+    });
+  }
+
+  if (window.PC) boot();
+  else window.addEventListener('DOMContentLoaded', function () { boot(); });
+})();
+</script>
+</body>
+</html>

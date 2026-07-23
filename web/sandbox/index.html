@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sandbox Bank — แอปธนาคารจำลอง (Sandbox)</title>
+<link rel="stylesheet" href="/assets/paycore.css" />
+<style>
+  /* ---- "Sandbox Bank" — a GENERIC, SCB-INSPIRED mobile-banking simulator.
+     NOT a real bank app, NOT SCB, no real logos. Purple/violet phone-frame
+     layout on top of the PayCore design system. All money marks come from
+     PC.money(). ---- */
+  :root{
+    --sb-violet:#4b2e83; --sb-violet-2:#6f42c1; --sb-violet-3:#8a63d2;
+    --sb-grad:linear-gradient(150deg,#4b2e83 0%,#6f42c1 60%,#8a63d2 100%);
+    --sb-ink:#1e1633; --sb-line:#ece7f5;
+  }
+  body{display:flex;align-items:center;justify-content:center;min-height:100vh;
+       padding:var(--pc-s5);background:#2a1e46;
+       background-image:radial-gradient(1200px 600px at 50% -10%,#5b3aa0 0%,#2a1e46 70%);}
+  /* persistent sandbox banner */
+  .sb-banner{position:fixed;top:0;left:0;right:0;z-index:50;
+       background:#ffcf33;color:#3a2d00;font-size:var(--pc-fs-12);font-weight:700;
+       text-align:center;padding:6px 10px;letter-spacing:.2px;line-height:1.35}
+  /* phone frame */
+  .phone{width:100%;max-width:390px;background:#fff;border-radius:34px;overflow:hidden;
+       box-shadow:0 30px 70px rgba(0,0,0,.45),0 0 0 10px #14102a,0 0 0 12px #322459;
+       margin-top:34px}
+  .sb-top{background:var(--sb-grad);color:#fff;padding:var(--pc-s6) var(--pc-s5) var(--pc-s8)}
+  .sb-top .sb-row{display:flex;align-items:center;justify-content:space-between}
+  .sb-brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:var(--pc-fs-16)}
+  .sb-logo{width:34px;height:34px;border-radius:9px;background:rgba(255,255,255,.16);
+       display:flex;align-items:center;justify-content:center;font-size:18px;
+       border:1px solid rgba(255,255,255,.28)}
+  .sb-sim{font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;
+       background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.25);
+       padding:3px 8px;border-radius:var(--pc-r-pill)}
+  .sb-hi{margin-top:var(--pc-s5);font-size:var(--pc-fs-13);opacity:.9}
+  .sb-body{padding:var(--pc-s5);min-height:340px}
+
+  .sb-label{font-size:var(--pc-fs-12);color:var(--pc-muted);margin-bottom:4px}
+  .sb-input{width:100%;height:44px;border:1px solid var(--sb-line);border-radius:var(--pc-r);
+       padding:0 12px;font-family:inherit;font-size:var(--pc-fs-14);color:var(--sb-ink);background:#faf9fe}
+  .sb-input:focus{outline:none;border-color:var(--sb-violet-2);box-shadow:0 0 0 3px rgba(111,66,193,.15)}
+  .sb-btn{width:100%;height:48px;border:none;border-radius:var(--pc-r);font-family:inherit;
+       font-size:var(--pc-fs-15);font-weight:700;cursor:pointer;color:#fff;background:var(--sb-grad);
+       box-shadow:0 8px 18px rgba(75,46,131,.35);transition:transform .06s ease,opacity .2s}
+  .sb-btn:active{transform:translateY(1px)}
+  .sb-btn[disabled]{opacity:.55;cursor:not-allowed;box-shadow:none}
+  .sb-btn.ghost{background:#fff;color:var(--sb-violet);border:1px solid var(--sb-line);box-shadow:none}
+  .sb-btn.danger{background:#fff;color:var(--pc-danger);border:1px solid #f0d5d5;box-shadow:none}
+  .sb-stack{display:flex;flex-direction:column;gap:var(--pc-s3)}
+
+  /* payment detail card */
+  .sb-detail{border:1px solid var(--sb-line);border-radius:var(--pc-r-lg);overflow:hidden;margin-bottom:var(--pc-s5)}
+  .sb-detail-top{background:#f7f5fd;padding:var(--pc-s5);text-align:center}
+  .sb-merch{font-size:var(--pc-fs-13);color:var(--pc-muted)}
+  .sb-merch b{display:block;color:var(--sb-ink);font-size:var(--pc-fs-16);margin-top:2px}
+  .sb-amt{font-size:34px;font-weight:800;color:var(--sb-violet);margin:var(--pc-s3) 0 2px;
+       font-variant-numeric:tabular-nums;letter-spacing:-.5px}
+  .sb-detail-rows{padding:var(--pc-s4) var(--pc-s5)}
+  .sb-drow{display:flex;justify-content:space-between;align-items:center;gap:10px;
+       padding:8px 0;font-size:var(--pc-fs-13);border-bottom:1px dashed var(--sb-line)}
+  .sb-drow:last-child{border-bottom:none}
+  .sb-drow span:first-child{color:var(--pc-muted)}
+  .sb-drow span:last-child{color:var(--sb-ink);font-weight:600;text-align:right;word-break:break-all}
+  .sb-method{display:inline-block;font-size:11px;font-weight:700;color:var(--sb-violet);
+       background:#efe9fb;border-radius:var(--pc-r-pill);padding:3px 10px}
+
+  /* PIN screen */
+  .sb-pin-wrap{text-align:center;padding-top:var(--pc-s3)}
+  .sb-pin-title{font-weight:700;font-size:var(--pc-fs-16);color:var(--sb-ink)}
+  .sb-pin-sub{color:var(--pc-muted);font-size:var(--pc-fs-13);margin:4px 0 var(--pc-s5)}
+  .sb-dots{display:flex;justify-content:center;gap:14px;margin-bottom:var(--pc-s6)}
+  .sb-dot{width:16px;height:16px;border-radius:50%;border:2px solid var(--sb-violet-3);transition:.15s}
+  .sb-dot.on{background:var(--sb-violet);border-color:var(--sb-violet)}
+  .sb-keys{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;max-width:280px;margin:0 auto}
+  .sb-key{height:60px;border:none;border-radius:16px;background:#f4f1fb;color:var(--sb-ink);
+       font-size:var(--pc-fs-22);font-weight:600;font-family:inherit;cursor:pointer}
+  .sb-key:active{background:#e7e0f7}
+  .sb-key.bio{font-size:22px;color:var(--sb-violet)}
+  .sb-key.blank{background:transparent;cursor:default}
+
+  /* success slip */
+  .sb-slip{text-align:center;padding-top:var(--pc-s4)}
+  .sb-check{width:72px;height:72px;border-radius:50%;background:var(--pc-success-bg);color:var(--pc-success);
+       display:flex;align-items:center;justify-content:center;font-size:38px;margin:0 auto var(--pc-s4);
+       animation:pop .4s ease}
+  @keyframes pop{0%{transform:scale(.4);opacity:0}70%{transform:scale(1.1)}100%{transform:scale(1);opacity:1}}
+  .sb-slip h3{color:var(--pc-success)}
+  .sb-slip .sb-slip-amt{font-size:30px;font-weight:800;color:var(--sb-ink);margin:var(--pc-s2) 0;font-variant-numeric:tabular-nums}
+  .sb-slip-box{border:1px dashed var(--sb-line);border-radius:var(--pc-r);padding:var(--pc-s4);
+       margin:var(--pc-s4) 0;text-align:left}
+  .sb-fail .sb-check{background:var(--pc-danger-bg);color:var(--pc-danger)}
+  .sb-fail h3{color:var(--pc-danger)}
+
+  /* pending list */
+  .sb-list-title{font-size:var(--pc-fs-13);color:var(--pc-muted);margin:var(--pc-s5) 0 var(--pc-s2)}
+  .sb-li{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;
+       border:1px solid var(--sb-line);border-radius:var(--pc-r);padding:12px;margin-bottom:8px;
+       background:#fff;cursor:pointer;text-align:left;font-family:inherit}
+  .sb-li:active{background:#f7f5fd}
+  .sb-li b{color:var(--sb-ink);font-size:var(--pc-fs-14)}
+  .sb-li small{color:var(--pc-muted);font-size:var(--pc-fs-12)}
+  .sb-li .sb-li-amt{color:var(--sb-violet);font-weight:700;font-variant-numeric:tabular-nums}
+
+  .sb-foot{padding:10px var(--pc-s5) var(--pc-s5);text-align:center}
+  .sb-foot small{color:var(--pc-muted);font-size:11px;line-height:1.5}
+  .sb-hide{display:none !important}
+  .sb-spin{display:inline-block;width:18px;height:18px;border:2px solid rgba(255,255,255,.5);
+       border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-3px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+  <!-- Persistent, unmissable legal/branding banner -->
+  <div class="sb-banner">⚠ SANDBOX — จำลองเพื่อทดสอบ ไม่ใช่แอปธนาคารจริง · Simulator, not a real bank app</div>
+
+  <div class="phone">
+    <div class="sb-top">
+      <div class="sb-row">
+        <div class="sb-brand"><span class="sb-logo">🏦</span> Sandbox Bank</div>
+        <span class="sb-sim">Simulator</span>
+      </div>
+      <div class="sb-hi" id="hi">แอปธนาคารจำลอง (Sandbox) · ทดสอบการรับชำระเงิน</div>
+    </div>
+
+    <div class="sb-body">
+      <!-- (A) ENTRY: paste id / list -->
+      <div id="viewEntry">
+        <button class="sb-btn" id="scanBtn" style="margin-bottom:14px">📷 สแกน QR เพื่อจ่าย</button>
+        <div class="sb-label">หรือใส่รหัสคำขอชำระเงิน (QR payment id)</div>
+        <input class="sb-input" id="qrIdInput" placeholder="เช่น 3f2b…-… วางจากหน้า checkout" autocomplete="off" />
+        <div style="height:10px"></div>
+        <button class="sb-btn ghost" id="loadBtn">โหลดคำขอชำระเงิน</button>
+
+        <div class="sb-list-title">รายการรอชำระล่าสุด (Incoming requests)</div>
+        <div id="pendingList"><small class="pc-muted">กำลังโหลด…</small></div>
+      </div>
+
+      <!-- (A2) SCAN: live camera QR scanner (jsQR) -->
+      <div id="viewScan" class="sb-hide">
+        <div style="position:relative;width:100%;max-width:300px;margin:0 auto;aspect-ratio:1/1;border-radius:16px;overflow:hidden;background:#000">
+          <video id="scanVideo" playsinline muted autoplay style="width:100%;height:100%;object-fit:cover"></video>
+          <div style="position:absolute;inset:12%;border:3px solid #fff;border-radius:14px"></div>
+        </div>
+        <canvas id="scanCanvas" class="sb-hide"></canvas>
+        <div id="scanStatus" style="text-align:center;margin:14px 0;font-size:14px;color:#6f42c1">กำลังเปิดกล้อง…</div>
+        <button class="sb-btn ghost" id="scanCancel">← ยกเลิก</button>
+      </div>
+
+      <!-- (B) DETAIL: payment card + pay/decline -->
+      <div id="viewDetail" class="sb-hide">
+        <div class="sb-detail">
+          <div class="sb-detail-top">
+            <div class="sb-merch">จ่ายเงินให้ <b id="dMerchant">—</b></div>
+            <div class="sb-amt" id="dAmount">฿0.00</div>
+            <span class="sb-method" id="dMethod">—</span>
+          </div>
+          <div class="sb-detail-rows">
+            <div class="sb-drow"><span>อ้างอิง (Ref)</span><span id="dRef">—</span></div>
+            <div class="sb-drow"><span>สถานะ</span><span id="dStatus">—</span></div>
+            <div class="sb-drow"><span>รหัสคำขอ</span><span id="dId">—</span></div>
+          </div>
+        </div>
+        <div class="sb-stack">
+          <button class="sb-btn" id="payBtn">ยืนยันจ่ายเงิน</button>
+          <button class="sb-btn danger" id="declineBtn">ปฏิเสธ / ยกเลิก</button>
+          <button class="sb-btn ghost" id="backBtn">← กลับ</button>
+        </div>
+      </div>
+
+      <!-- (C) PIN screen -->
+      <div id="viewPin" class="sb-hide">
+        <div class="sb-pin-wrap">
+          <div class="sb-pin-title">ใส่รหัส PIN 6 หลัก</div>
+          <div class="sb-pin-sub">ยืนยันการจ่ายเงิน (จำลอง — ใส่เลขอะไรก็ได้)</div>
+          <div class="sb-dots" id="pinDots"></div>
+          <div class="sb-keys" id="pinKeys"></div>
+        </div>
+      </div>
+
+      <!-- (D) RESULT slip -->
+      <div id="viewResult" class="sb-hide">
+        <div class="sb-slip" id="slip">
+          <div class="sb-check" id="slipIcon">✓</div>
+          <h3 id="slipTitle">โอนเงินสำเร็จ</h3>
+          <div class="sb-slip-amt" id="slipAmount">฿0.00</div>
+          <div class="sb-slip-box">
+            <div class="sb-drow"><span>ผู้รับเงิน</span><span id="slipMerchant">—</span></div>
+            <div class="sb-drow"><span>อ้างอิง</span><span id="slipRef">—</span></div>
+            <div class="sb-drow"><span>รหัสรายการ</span><span id="slipId">—</span></div>
+            <div class="sb-drow"><span>เวลา</span><span id="slipTime">—</span></div>
+          </div>
+          <button class="sb-btn ghost" id="doneBtn">เสร็จสิ้น</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="sb-foot">
+      <small>Sandbox Bank เป็นแอปจำลองเพื่อทดสอบระบบรับชำระเงินเท่านั้น<br/>ไม่มีการโอนเงินจริง · ไม่ใช่แอปของธนาคารใด ๆ</small>
+    </div>
+  </div>
+
+<script src="/assets/paycore.js" defer></script>
+<script src="/assets/jsqr.min.js"></script>
+<script>
+/* ---- Sandbox Bank simulator ----
+   All calls hit the PUBLIC /v1/sandbox/... endpoints (same origin), which exist
+   ONLY when the server runs with SANDBOX_MODE=true. The SERVER holds the webhook
+   secret and signs the bank confirmation internally, so nothing secret lives in
+   this browser. Flow: load a qr-payment by id (?qr= deep link, paste, or tap a
+   pending request) -> show detail -> PIN -> POST /pay (or /decline) -> slip. */
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var current = null;   // the loaded SandboxQRView
+  var enteredPin = '';
+
+  function money(minor) {
+    return (window.PC && PC.money) ? PC.money(minor) : ('฿' + (Number(minor) / 100).toFixed(2));
+  }
+  function toast(msg, type) {
+    if (window.PC && PC.toast) PC.toast(msg, { type: type || 'info' });
+    else alert(msg);
+  }
+  function methodLabel(m) {
+    return ({
+      promptpay_dynamic: 'PromptPay (Dynamic)', promptpay_static: 'PromptPay (Static)',
+      card_scheme: 'Card Scheme QR', cross_border: 'Cross-border QR',
+    })[m] || m;
+  }
+  function show(view) {
+    ['viewEntry', 'viewScan', 'viewDetail', 'viewPin', 'viewResult'].forEach(function (v) {
+      $(v).classList.toggle('sb-hide', v !== view);
+    });
+  }
+
+  // ---- camera QR scanner (jsQR, same-origin) ----
+  var scanStream = null, scanRAF = null;
+  function parseScannedToId(text) {
+    if (!text) return '';
+    text = String(text).trim();
+    try { var u = new URL(text, location.origin); var q = u.searchParams.get('qr'); if (q) return q.trim(); } catch (_) {}
+    var m = text.match(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/);
+    return m ? m[0] : '';
+  }
+  function stopScan() {
+    if (scanRAF) { cancelAnimationFrame(scanRAF); scanRAF = null; }
+    if (scanStream) { scanStream.getTracks().forEach(function (t) { t.stop(); }); scanStream = null; }
+    var v = $('scanVideo'); if (v) { try { v.pause(); } catch (_) {} v.srcObject = null; }
+  }
+  function scanTick() {
+    var v = $('scanVideo'), c = $('scanCanvas');
+    if (!scanStream || !v) return;
+    if (v.readyState >= 2 && v.videoWidth) {
+      var w = v.videoWidth, h = v.videoHeight;
+      c.width = w; c.height = h;
+      var ctx = c.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(v, 0, 0, w, h);
+      try {
+        var img = ctx.getImageData(0, 0, w, h);
+        var code = (typeof jsQR !== 'undefined') && jsQR(img.data, w, h, { inversionAttempts: 'dontInvert' });
+        if (code && code.data) {
+          var id = parseScannedToId(code.data);
+          if (id) { stopScan(); loadQR(id); return; }
+          var d = String(code.data || '');
+          if (/^0002/.test(d) || d.indexOf('A00000067701') >= 0) {
+            $('scanStatus').textContent = 'นี่คือ QR PromptPay ธรรมดา — ต้องสแกน QR จากหน้า checkout ของ PayCore (ลองรีเฟรชหน้า checkout ก่อน)';
+          } else {
+            $('scanStatus').textContent = 'QR นี้ไม่ใช่คำขอชำระเงินของ PayCore';
+          }
+        }
+      } catch (_) { /* keep scanning */ }
+    }
+    scanRAF = requestAnimationFrame(scanTick);
+  }
+  function startScan() {
+    if (typeof jsQR === 'undefined') { toast('ตัวสแกน QR โหลดไม่สำเร็จ ลองรีเฟรช', 'error'); return; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      toast('อุปกรณ์นี้เปิดกล้องไม่ได้ — วางรหัส/ลิงก์แทน', 'warn'); return;
+    }
+    show('viewScan');
+    $('scanStatus').textContent = 'กำลังเปิดกล้อง…';
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
+      .then(function (stream) {
+        scanStream = stream;
+        var v = $('scanVideo'); v.srcObject = stream; v.setAttribute('playsinline', ''); return v.play();
+      })
+      .then(function () { $('scanStatus').textContent = 'เล็ง QR ให้อยู่ในกรอบ…'; scanTick(); })
+      .catch(function (err) {
+        $('scanStatus').textContent = 'เปิดกล้องไม่ได้: ' + ((err && err.message) || 'ไม่ได้รับอนุญาต');
+        toast('เปิดกล้องไม่ได้ — อนุญาตให้เข้าถึงกล้อง หรือใช้วางรหัส/ลิงก์แทน', 'error');
+      });
+  }
+
+  // ---- API (same-origin PUBLIC sandbox routes) ----
+  function apiGet(path) {
+    if (window.PC && PC.get) return PC.get(path, { auth: false });
+    return fetch(path).then(function (r) { return r.json(); }).then(function (b) {
+      if (!b || b.success === false) throw new Error((b && b.message) || 'error'); return b.data;
+    });
+  }
+  function apiPost(path) {
+    if (window.PC && PC.post) return PC.post(path, null, { auth: false });
+    return fetch(path, { method: 'POST' }).then(function (r) { return r.json(); }).then(function (b) {
+      if (!b || b.success === false) throw new Error((b && b.message) || 'error'); return b.data;
+    });
+  }
+
+  // ---- load a QR payment into the detail card ----
+  function loadQR(id) {
+    id = (id || '').trim();
+    if (!id) { toast('กรุณาใส่รหัสคำขอชำระเงิน', 'warn'); return; }
+    apiGet('/v1/sandbox/qr-payments/' + encodeURIComponent(id)).then(function (v) {
+      current = v;
+      $('dMerchant').textContent = v.merchant_name || '—';
+      $('dAmount').textContent = money(v.amount_minor);
+      $('dMethod').textContent = methodLabel(v.method);
+      $('dRef').textContent = v.reference || '—';
+      $('dStatus').textContent = v.status;
+      $('dId').textContent = v.id;
+      // Already-settled requests cannot be paid again.
+      var open = v.status === 'awaiting_payment';
+      $('payBtn').disabled = !open;
+      $('declineBtn').disabled = !open;
+      if (v.status === 'paid') { showResult(v, true, true); return; }
+      if (v.status === 'expired') { toast('คำขอนี้หมดอายุแล้ว', 'warn'); }
+      if (v.status === 'failed') { toast('คำขอนี้ถูกปฏิเสธไปแล้ว', 'warn'); }
+      show('viewDetail');
+    }).catch(function (err) {
+      toast(err.status === 404 ? 'ไม่พบคำขอชำระเงินนี้' : (err.message || 'โหลดไม่สำเร็จ'), 'error');
+    });
+  }
+
+  // ---- pending "incoming requests" list ----
+  function loadPending() {
+    apiGet('/v1/sandbox/qr-payments?status=awaiting_payment&limit=20').then(function (items) {
+      var el = $('pendingList');
+      if (!items || !items.length) { el.innerHTML = '<small class="pc-muted">ยังไม่มีรายการรอชำระ</small>'; return; }
+      el.innerHTML = '';
+      items.forEach(function (it) {
+        var b = document.createElement('button');
+        b.className = 'sb-li';
+        b.innerHTML = '<span><b>' + escapeHtml(it.merchant_name || 'ร้านค้า') + '</b><br/>' +
+          '<small>' + methodLabel(it.method) + '</small></span>' +
+          '<span class="sb-li-amt">' + money(it.amount_minor) + '</span>';
+        b.onclick = function () { loadQR(it.id); };
+        el.appendChild(b);
+      });
+    }).catch(function () {
+      $('pendingList').innerHTML = '<small class="pc-muted">โหลดรายการไม่สำเร็จ (ต้องเปิด SANDBOX_MODE)</small>';
+    });
+  }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+    });
+  }
+
+  // ---- PIN pad ----
+  function renderPin() {
+    var dots = $('pinDots'); dots.innerHTML = '';
+    for (var i = 0; i < 6; i++) {
+      var d = document.createElement('div');
+      d.className = 'sb-dot' + (i < enteredPin.length ? ' on' : '');
+      dots.appendChild(d);
+    }
+    var keys = $('pinKeys'); keys.innerHTML = '';
+    ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'bio', '0', 'del'].forEach(function (k) {
+      var btn = document.createElement('button');
+      if (k === 'bio') { btn.className = 'sb-key bio'; btn.textContent = '☺'; btn.title = 'ยืนยันด้วยไบโอเมตริก (จำลอง)'; btn.onclick = function () { enteredPin = '000000'; renderPin(); submitPin(); }; }
+      else if (k === 'del') { btn.className = 'sb-key'; btn.textContent = '⌫'; btn.onclick = function () { enteredPin = enteredPin.slice(0, -1); renderPin(); }; }
+      else { btn.className = 'sb-key'; btn.textContent = k; btn.onclick = function () { if (enteredPin.length < 6) { enteredPin += k; renderPin(); if (enteredPin.length === 6) submitPin(); } }; }
+      keys.appendChild(btn);
+    });
+  }
+  function submitPin() {
+    // The PIN is purely for realism — the server accepts any 6 digits.
+    setTimeout(doPay, 250);
+  }
+
+  // ---- pay / decline ----
+  function doPay() {
+    if (!current) return;
+    apiPost('/v1/sandbox/qr-payments/' + encodeURIComponent(current.id) + '/pay').then(function (qp) {
+      showResult(qp, qp.status === 'paid', qp.status === 'paid');
+    }).catch(function (err) {
+      toast(err.message || 'ชำระเงินไม่สำเร็จ', 'error');
+      show('viewDetail');
+    });
+  }
+  function doDecline() {
+    if (!current) return;
+    $('declineBtn').disabled = true;
+    apiPost('/v1/sandbox/qr-payments/' + encodeURIComponent(current.id) + '/decline').then(function (qp) {
+      showResult(qp, false, false);
+    }).catch(function (err) {
+      toast(err.message || 'ทำรายการไม่สำเร็จ', 'error');
+      $('declineBtn').disabled = false;
+    });
+  }
+
+  // ---- result slip ----
+  function showResult(qp, success, paid) {
+    var slip = $('slip');
+    slip.classList.toggle('sb-fail', !paid);
+    $('slipIcon').textContent = paid ? '✓' : '✕';
+    $('slipTitle').textContent = paid ? 'โอนเงินสำเร็จ' : 'รายการถูกปฏิเสธ';
+    $('slipAmount').textContent = money((current && current.amount_minor) || 0);
+    $('slipMerchant').textContent = (current && current.merchant_name) || '—';
+    $('slipRef').textContent = (current && current.reference) || (qp && qp.reference) || '—';
+    $('slipId').textContent = (qp && qp.id) || (current && current.id) || '—';
+    $('slipTime').textContent = new Date().toLocaleString('th-TH');
+    show('viewResult');
+  }
+
+  // ---- wire up ----
+  document.addEventListener('DOMContentLoaded', function () {
+    renderPin();
+    loadPending();
+    $('loadBtn').onclick = function () { loadQR($('qrIdInput').value); };
+    $('qrIdInput').addEventListener('keydown', function (e) { if (e.key === 'Enter') loadQR($('qrIdInput').value); });
+    $('scanBtn').onclick = startScan;
+    $('scanCancel').onclick = function () { stopScan(); show('viewEntry'); loadPending(); };
+    $('payBtn').onclick = function () { enteredPin = ''; renderPin(); show('viewPin'); };
+    $('declineBtn').onclick = doDecline;
+    $('backBtn').onclick = function () { stopScan(); current = null; show('viewEntry'); loadPending(); };
+    $('doneBtn').onclick = function () { stopScan(); current = null; $('qrIdInput').value = ''; show('viewEntry'); loadPending(); };
+
+    // deep link ?qr=<id> from the checkout page
+    var qp = new URLSearchParams(location.search).get('qr');
+    if (qp) { $('qrIdInput').value = qp; loadQR(qp); }
+  });
+})();
+</script>
+</body>
+</html>

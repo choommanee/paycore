@@ -1,0 +1,20 @@
+# Railway service configuration.
+# Docs: https://docs.railway.com/reference/config-as-code
+#
+# Build the existing Dockerfile (distroless static binary). The server binds
+# 0.0.0.0:$PORT (Railway injects $PORT) — see internal/config. Readiness is
+# probed at /readyz, which returns 200 only once the DB pool answers a ping.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# /readyz returns 503 until the Postgres pool is reachable, so Railway waits for
+# a genuinely-ready instance before shifting traffic to it.
+healthcheckPath = "/readyz"
+healthcheckTimeout = 120
+# Restart a crashed instance (e.g. a fatal migration or DB outage) but do not
+# loop forever on a hard config error.
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

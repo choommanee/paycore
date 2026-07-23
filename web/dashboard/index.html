@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PayCore — Merchant Dashboard</title>
+<link rel="stylesheet" href="/assets/paycore.css" />
+<style>
+  /* Dashboard-local extras that layer on top of paycore.css (no build step). */
+  .pc-app{display:none}
+  .pc-app.ready{display:flex}
+  .pc-auth{display:none}
+  .pc-auth.show{display:flex}
+
+  /* clickable transaction rows */
+  .pc-table tbody tr.clickable{cursor:pointer}
+
+  /* detail drawer — slides in from the right */
+  .pc-drawer-overlay{position:fixed;inset:0;z-index:70;background:rgba(15,23,41,.4);display:none}
+  .pc-drawer-overlay.show{display:block;animation:pc-fade .15s ease-out}
+  .pc-drawer{
+    position:fixed;top:0;right:0;bottom:0;width:100%;max-width:460px;z-index:71;
+    background:var(--pc-surface);box-shadow:var(--pc-sh-4);
+    display:flex;flex-direction:column;transform:translateX(100%);
+    transition:transform .2s cubic-bezier(.2,.8,.2,1);
+  }
+  .pc-drawer.show{transform:none}
+  .pc-drawer-head{
+    display:flex;align-items:center;justify-content:space-between;gap:var(--pc-s3);
+    padding:var(--pc-s5) var(--pc-s6);border-bottom:1px solid var(--pc-line-2);
+  }
+  .pc-drawer-body{padding:var(--pc-s6);overflow-y:auto;flex:1}
+  .pc-drawer-foot{
+    display:flex;gap:var(--pc-s2);flex-wrap:wrap;
+    padding:var(--pc-s4) var(--pc-s6);border-top:1px solid var(--pc-line-2);background:var(--pc-surface-2);
+  }
+
+  /* one-time secret reveal box */
+  .pc-secret{
+    display:flex;align-items:center;gap:var(--pc-s2);
+    background:var(--pc-surface-2);border:1px solid var(--pc-line);border-radius:var(--pc-r);
+    padding:10px 12px;font-family:var(--pc-font-mono);font-size:var(--pc-fs-12);
+    word-break:break-all;color:var(--pc-ink);
+  }
+  .pc-copy-row{display:flex;align-items:center;gap:var(--pc-s2)}
+
+  /* small skeleton grid for loading states */
+  .pc-skel-line{height:14px;margin-bottom:8px}
+
+  /* pagination footer */
+  .pc-pager{display:flex;align-items:center;justify-content:space-between;gap:var(--pc-s3);margin-top:var(--pc-s4)}
+  .pc-pager .pc-muted{font-size:var(--pc-fs-12)}
+
+  /* sidebar overlay toggle for mobile */
+  .pc-side-scrim{position:fixed;inset:var(--pc-nav-h) 0 0 0;background:rgba(15,23,41,.35);z-index:44;display:none}
+  .pc-side-scrim.show{display:block}
+  @media (min-width:821px){ .pc-menu-btn{display:none} }
+  .pc-menu-btn{margin-right:var(--pc-s2)}
+</style>
+</head>
+<body>
+
+<!-- ============================== LOGIN ============================== -->
+<div class="pc-auth" id="auth">
+  <form class="pc-login" id="loginForm" novalidate>
+    <div class="pc-login-brand" data-pc-logo></div>
+    <h2>Merchant Dashboard</h2>
+    <p class="pc-login-sub">Sign in with your PayCore API key to view payments, disputes and settlements.</p>
+    <div class="pc-form">
+      <div class="pc-field">
+        <label class="pc-label" for="inKey">API key <span class="pc-req">*</span></label>
+        <input class="pc-input pc-mono" id="inKey" type="password" autocomplete="off"
+               placeholder="sk_live_…" spellcheck="false" />
+        <div class="pc-error" id="keyErr"></div>
+      </div>
+      <div class="pc-field">
+        <label class="pc-label" for="inBase">API base URL <span class="pc-muted">(optional)</span></label>
+        <input class="pc-input pc-mono" id="inBase" type="text" autocomplete="off"
+               placeholder="(same origin)" spellcheck="false" />
+        <div class="pc-hint">Leave blank to call the API on this same site.</div>
+      </div>
+      <button class="pc-btn pc-btn-primary pc-btn-lg pc-btn-block" type="submit" id="loginBtn">
+        Sign in
+      </button>
+    </div>
+    <div class="pc-trust">🔒 Your key is stored only in this browser (localStorage).</div>
+  </form>
+</div>
+
+<!-- ============================== APP SHELL ============================== -->
+<div class="pc-app" id="app">
+  <!-- top nav -->
+  <nav class="pc-nav">
+    <button class="pc-btn pc-btn-ghost pc-btn-icon pc-menu-btn" id="menuBtn" aria-label="Menu">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+    </button>
+    <span class="pc-brand" data-pc-logo></span>
+    <span class="pc-nav-spacer"></span>
+    <div class="pc-nav-right">
+      <span class="pc-env-pill" id="envPill">SANDBOX</span>
+      <span class="pc-hstack pc-gap2" style="gap:8px">
+        <span class="pc-avatar" id="avatar">·</span>
+        <span class="pc-vstack" style="gap:0;line-height:1.2">
+          <b id="mName" style="font-size:var(--pc-fs-13)">—</b>
+          <span class="pc-muted" id="mStatus" style="font-size:var(--pc-fs-11)"></span>
+        </span>
+      </span>
+      <button class="pc-btn pc-btn-secondary pc-btn-sm" id="logoutBtn">Log out</button>
+    </div>
+  </nav>
+
+  <div class="pc-shell">
+    <!-- sidebar -->
+    <aside class="pc-side" id="side">
+      <div class="pc-side-group">
+        <div class="pc-side-label">Merchant</div>
+        <a href="#/overview"     data-route="overview">Overview</a>
+        <a href="#/transactions" data-route="transactions">Transactions</a>
+        <a href="#/qr"           data-route="qr">QR Payments</a>
+        <a href="#/disputes"     data-route="disputes">Disputes</a>
+        <a href="#/settlements"  data-route="settlements">Settlements</a>
+      </div>
+      <div class="pc-side-group">
+        <div class="pc-side-label">Account</div>
+        <a href="#/developers"   data-route="developers">Developers</a>
+      </div>
+    </aside>
+    <div class="pc-side-scrim" id="sideScrim"></div>
+
+    <!-- main view mount -->
+    <main class="pc-main">
+      <div class="pc-container" id="view"><!-- routed content --></div>
+    </main>
+  </div>
+</div>
+
+<!-- detail drawer -->
+<div class="pc-drawer-overlay" id="drawerOverlay"></div>
+<aside class="pc-drawer" id="drawer" aria-hidden="true"></aside>
+
+<script src="/assets/paycore.js" defer></script>
+<script defer>
+document.addEventListener('DOMContentLoaded', function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+
+  /* ---------------------------------------------------------------- money -- */
+  // Payment / QR / dispute amounts are DECIMAL strings (major units, "1290.00").
+  // Stats / settlement amounts are minor units (satang, int64). Two helpers:
+  var money = PC.money;                 // satang -> "฿1,290.00"
+  var moneyDec = PC.moneyFromDecimal;   // "1290.00" -> "฿1,290.00"
+
+  function pct(frac) {
+    var n = Number(frac || 0) * 100;
+    return (Math.round(n * 10) / 10).toLocaleString('en-US', { maximumFractionDigits: 1 }) + '%';
+  }
+
+  /* ------------------------------------------------------- error helpers -- */
+  // A network / server failure should NEVER blank the whole screen. Callers wrap
+  // renders in withGuard(); a 404 is treated as "no data yet" (empty state).
+  function isNotFound(err) { return err && (err.status === 404 || err.status === 501); }
+
+  function friendlyEmpty(title, message, actionHTML) {
+    return PC.empty({ title: title, message: message, actionHTML: actionHTML || '' });
+  }
+
+  // Load data, render, and degrade gracefully. loader() -> Promise, ok(data)->html,
+  // emptyState is html shown when the endpoint 404s or returns nothing.
+  function loadInto(mountEl, loader, ok, emptyOpts) {
+    mountEl.innerHTML = skeletonCard();
+    loader().then(function (data) {
+      var isEmpty = data == null || (Array.isArray(data) && data.length === 0);
+      if (isEmpty) {
+        mountEl.innerHTML = friendlyEmpty(
+          emptyOpts.title, emptyOpts.message, emptyOpts.actionHTML);
+        if (emptyOpts.after) emptyOpts.after(mountEl);
+        return;
+      }
+      mountEl.innerHTML = ok(data);
+      if (emptyOpts.after) emptyOpts.after(mountEl);
+    }).catch(function (err) {
+      if (isNotFound(err)) {
+        mountEl.innerHTML = friendlyEmpty(
+          emptyOpts.comingTitle || 'Coming soon',
+          emptyOpts.comingMsg || 'This feature is not available on your gateway yet.');
+        return;
+      }
+      // Real error -> toast + a soft inline retry, not a broken page.
+      PC.toast(err.message || 'Something went wrong', { type: 'error', title: 'Request failed' });
+      mountEl.innerHTML = friendlyEmpty(
+        'Could not load', (err.message || 'Please try again.'),
+        '<button class="pc-btn pc-btn-secondary pc-btn-sm" onclick="location.reload()">Retry</button>');
+    });
+  }
+
+  function skeletonCard() {
+    var lines = '';
+    for (var i = 0; i < 5; i++) lines += '<div class="pc-skel pc-skel-line" style="width:' + (100 - i * 8) + '%"></div>';
+    return '<div class="pc-card pc-card-pad">' + lines + '</div>';
+  }
+
+  /* ----------------------------------------------------------- clipboard -- */
+  function copyBtn(value) {
+    return '<button class="pc-btn pc-btn-secondary pc-btn-sm" data-copy="' + PC.escape(value) + '">Copy</button>';
+  }
+  document.body.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-copy]');
+    if (!b) return;
+    var v = b.getAttribute('data-copy');
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(v).then(function () {
+        PC.toast('Copied to clipboard', { type: 'success', duration: 1500 });
+      }).catch(function () { PC.toast('Copy failed', { type: 'error' }); });
+    }
+  });
+
+  /* =====================================================================
+     AUTH — validate the stored key against GET /v1/me
+     ===================================================================== */
+  var MERCHANT = null; // cached profile from /v1/me
+
+  function showLogin(prefillErr) {
+    $('app').classList.remove('ready');
+    $('auth').classList.add('show');
+    var cfg = PC.config();
+    $('inBase').value = (cfg.base && cfg.base !== location.origin) ? cfg.base : '';
+    if (prefillErr) $('keyErr').textContent = prefillErr;
+  }
+
+  function showApp() {
+    $('auth').classList.remove('show');
+    $('app').classList.add('ready');
+  }
+
+  function fillHeader(m) {
+    MERCHANT = m;
+    $('mName').textContent = m.name || 'Merchant';
+    var st = (m.status || '').toLowerCase();
+    $('mStatus').innerHTML = PC.badge(st || 'pending');
+    $('avatar').textContent = (m.name || '?').trim().charAt(0).toUpperCase();
+    // env pill: treat "active/live" merchants as live, else sandbox.
+    var pill = $('envPill');
+    var live = /active|live|approved/.test(st);
+    pill.textContent = live ? 'LIVE' : 'SANDBOX';
+    pill.classList.toggle('live', live);
+  }
+
+  // Try to authenticate the stored key. On success -> app; else -> login.
+  function boot() {
+    var cfg = PC.config();
+    if (!cfg.key) { showLogin(); return; }
+    PC.get('/v1/me').then(function (m) {
+      fillHeader(m);
+      showApp();
+      startRouter();
+    }).catch(function (err) {
+      if (err.status === 401 || err.status === 403) {
+        PC.clearKey();
+        showLogin('That API key was rejected. Please check and try again.');
+      } else {
+        // Server unreachable etc. — still let them in so the app degrades per-tab,
+        // but warn. We keep the key since it may be a transient outage.
+        PC.toast(err.message || 'Could not reach the gateway', { type: 'warn', title: 'Connection issue' });
+        fillHeader({ name: 'Merchant', status: 'unknown' });
+        showApp();
+        startRouter();
+      }
+    });
+  }
+
+  $('loginForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    $('keyErr').textContent = '';
+    var key = $('inKey').value.trim();
+    var base = $('inBase').value.trim();
+    if (!key) { $('keyErr').textContent = 'Enter your API key.'; return; }
+    if (base) PC.setBase(base.replace(/\/+$/, '')); else PC.setBase(null);
+    PC.setKey(key);
+
+    var btn = $('loginBtn');
+    btn.disabled = true; btn.textContent = 'Signing in…';
+    PC.get('/v1/me').then(function (m) {
+      fillHeader(m);
+      $('inKey').value = '';
+      showApp();
+      startRouter();
+    }).catch(function (err) {
+      btn.disabled = false; btn.textContent = 'Sign in';
+      if (err.status === 401 || err.status === 403) {
+        $('keyErr').textContent = 'That API key was rejected.';
+      } else {
+        $('keyErr').textContent = err.message || 'Could not reach the gateway at that URL.';
+      }
+    });
+  });
+
+  $('logoutBtn').addEventListener('click', function () {
+    PC.clearKey();
+    MERCHANT = null;
+    location.hash = '';
+    location.reload();
+  });
+
+  /* sidebar mobile toggle */
+  $('menuBtn').addEventListener('click', function () {
+    $('side').classList.toggle('open');
+    $('sideScrim').classList.toggle('show');
+  });
+  $('sideScrim').addEventListener('click', function () {
+    $('side').classList.remove('open');
+    $('sideScrim').classList.remove('show');
+  });
+  // close the mobile sidebar after picking a tab
+  $('side').addEventListener('click', function (e) {
+    if (e.target.closest('a')) { $('side').classList.remove('open'); $('sideScrim').classList.remove('show'); }
+  });
+
+  /* =====================================================================
+     DETAIL DRAWER (transaction detail + capture/refund/void actions)
+     ===================================================================== */
+  var drawer = $('drawer'), drawerOverlay = $('drawerOverlay');
+  function closeDrawer() {
+    drawer.classList.remove('show');
+    drawerOverlay.classList.remove('show');
+    drawer.setAttribute('aria-hidden', 'true');
+  }
+  drawerOverlay.addEventListener('click', closeDrawer);
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeDrawer(); });
+
+  function openDrawer(html) {
+    drawer.innerHTML = html;
+    drawer.classList.add('show');
+    drawerOverlay.classList.add('show');
+    drawer.setAttribute('aria-hidden', 'false');
+  }
+
+  // Render a payment into the drawer, wiring capture/refund/void to the real API.
+  function showPaymentDrawer(p) {
+    var canCapture = p.status === 'authorized';
+    var canVoid = p.status === 'authorized' || p.status === 'requires_action';
+    var canRefund = p.status === 'captured' || p.status === 'partial_refunded';
+
+    var actions = '';
+    if (canCapture) actions += '<button class="pc-btn pc-btn-primary pc-btn-sm" data-act="capture">Capture</button>';
+    if (canRefund) actions += '<button class="pc-btn pc-btn-secondary pc-btn-sm" data-act="refund">Refund</button>';
+    if (canVoid) actions += '<button class="pc-btn pc-btn-danger pc-btn-sm" data-act="void">Void</button>';
+    if (!actions) actions = '<span class="pc-muted" style="font-size:var(--pc-fs-12)">No actions available in this state.</span>';
+
+    var card = (p.card_brand || p.card_last4)
+      ? PC.escape((p.card_brand || '').toUpperCase()) + (p.card_last4 ? ' •• ' + PC.escape(p.card_last4) : '')
+      : '—';
+
+    openDrawer(
+      '<div class="pc-drawer-head">' +
+        '<div><div class="pc-muted" style="font-size:var(--pc-fs-11)">Payment</div>' +
+          '<h3 style="font-size:var(--pc-fs-18)">' + moneyDec(p.amount) + '</h3></div>' +
+        '<div class="pc-hstack">' + PC.badge(p.status) +
+          '<button class="pc-modal-close" id="drawerClose" aria-label="Close">' +
+          '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>' +
+          '</button></div>' +
+      '</div>' +
+      '<div class="pc-drawer-body">' +
+        '<dl class="pc-kv">' +
+          kv('Payment ID', '<span class="pc-mono">' + PC.escape(p.id) + '</span> ' + copyBtn(p.id)) +
+          kv('Status', PC.badge(p.status)) +
+          kv('Amount', moneyDec(p.amount)) +
+          kv('Captured', moneyDec(p.captured_amount || '0')) +
+          kv('Refunded', moneyDec(p.refunded_amount || '0')) +
+          kv('Currency', PC.escape(p.currency || 'THB')) +
+          kv('Card', card) +
+          kv('Reference', p.reference ? PC.escape(p.reference) : '—') +
+          kv('Acquirer ref', p.acquirer_ref ? '<span class="pc-mono">' + PC.escape(p.acquirer_ref) + '</span>' : '—') +
+          kv('Auth code', p.auth_code ? '<span class="pc-mono">' + PC.escape(p.auth_code) + '</span>' : '—') +
+          kv('Created', PC.fmtDate(p.created_at)) +
+          kv('Updated', PC.fmtDate(p.updated_at)) +
+        '</dl>' +
+        (p.next_action_url ? '<div class="pc-divider"></div><a class="pc-btn pc-btn-secondary pc-btn-sm" href="' +
+          PC.escape(p.next_action_url) + '" target="_blank" rel="noopener">Open 3-D Secure challenge</a>' : '') +
+      '</div>' +
+      '<div class="pc-drawer-foot">' + actions + '</div>'
+    );
+
+    $('drawerClose').addEventListener('click', closeDrawer);
+
+    drawer.querySelectorAll('[data-act]').forEach(function (b) {
+      b.addEventListener('click', function () { runAction(p, b.getAttribute('data-act'), b); });
+    });
+  }
+
+  function kv(label, valueHTML) {
+    return '<dt>' + PC.escape(label) + '</dt><dd>' + valueHTML + '</dd>';
+  }
+
+  // Execute capture/refund/void against the real POST endpoints. Capture/refund
+  // require an Idempotency-Key (server enforces it) and an amount; void does not.
+  function runAction(p, act, btn) {
+    var idem = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
+
+    function confirmAmount(title, defaultAmount, then) {
+      var body = PC.el('div', { class: 'pc-form' });
+      body.innerHTML =
+        '<div class="pc-field"><label class="pc-label">Amount (' + PC.escape(p.currency || 'THB') + ')</label>' +
+        '<div class="pc-input-group"><span class="pc-affix">฿</span>' +
+        '<input class="pc-input" id="actAmt" inputmode="decimal" value="' + PC.escape(defaultAmount) + '"></div>' +
+        '<div class="pc-hint">Max ' + PC.escape(defaultAmount) + '.</div></div>';
+      var foot = PC.el('div');
+      var cancel = PC.el('button', { class: 'pc-btn pc-btn-secondary', text: 'Cancel', onclick: function () { m.close(); } });
+      var ok = PC.el('button', {
+        class: 'pc-btn pc-btn-primary', text: title,
+        onclick: function () {
+          var amt = (document.getElementById('actAmt').value || '').trim();
+          if (!amt || Number(amt) <= 0) { PC.toast('Enter a valid amount', { type: 'warn' }); return; }
+          m.close(); then(amt);
+        },
+      });
+      foot.appendChild(cancel); foot.appendChild(ok);
+      var m = PC.modal({ title: title, size: 'sm', body: body, footer: foot });
+    }
+
+    function fire(promise) {
+      btn.disabled = true;
+      promise.then(function (updated) {
+        PC.toast(act.charAt(0).toUpperCase() + act.slice(1) + ' successful', { type: 'success' });
+        showPaymentDrawer(updated);            // refresh drawer with new state
+        if (PC.router && PC.router.render) PC.router.render(); // refresh the list behind it
+      }).catch(function (err) {
+        btn.disabled = false;
+        PC.toast(err.message || 'Action failed', { type: 'error', title: 'Could not ' + act });
+      });
+    }
+
+    if (act === 'void') {
+      PC.confirm({
+        title: 'Void this authorization?', danger: true,
+        message: 'This reverses the authorization before capture. It cannot be undone.',
+        confirmText: 'Void payment',
+      }).then(function (yes) {
+        if (yes) fire(PC.post('/v1/payments/' + p.id + '/void', {}));
+      });
+      return;
+    }
+
+    if (act === 'capture') {
+      confirmAmount('Capture', String(p.amount), function (amt) {
+        fire(PC.post('/v1/payments/' + p.id + '/capture', { amount: amt }, { idempotency: idem }));
+      });
+      return;
+    }
+
+    if (act === 'refund') {
+      var refundable = String(p.captured_amount && Number(p.captured_amount) > 0 ? p.captured_amount : p.amount);
+      confirmAmount('Refund', refundable, function (amt) {
+        fire(PC.post('/v1/payments/' + p.id + '/refund', { amount: amt, reason: 'requested_by_customer' }, { idempotency: idem }));
+      });
+      return;
+    }
+  }
+
+  /* =====================================================================
+     VIEWS
+     ===================================================================== */
+
+  function pageHead(title, sub, actionsHTML) {
+    return '<div class="pc-page-head"><div>' +
+      '<div class="pc-page-title">' + PC.escape(title) + '</div>' +
+      (sub ? '<div class="pc-page-sub">' + PC.escape(sub) + '</div>' : '') +
+      '</div>' + (actionsHTML ? '<div class="pc-actions">' + actionsHTML + '</div>' : '') + '</div>';
+  }
+
+  function statTile(label, value, meta) {
+    return '<div class="pc-stat">' +
+      '<div class="pc-stat-label">' + PC.escape(label) + '</div>' +
+      '<div class="pc-stat-value">' + value + '</div>' +
+      (meta ? '<div class="pc-stat-meta">' + meta + '</div>' : '') + '</div>';
+  }
+
+  /* -------------------------------------------------------- OVERVIEW ----- */
+  function viewOverview(ctx) {
+    ctx.el.innerHTML = pageHead('Overview', 'Your payments at a glance (last 30 days).') +
+      '<div id="ovStats"></div>' +
+      '<div style="margin-top:var(--pc-s8)"></div>' +
+      '<div class="pc-page-head" style="margin-bottom:var(--pc-s4)"><div class="pc-page-title" style="font-size:var(--pc-fs-16)">Recent transactions</div>' +
+        '<div class="pc-actions"><a class="pc-btn pc-btn-secondary pc-btn-sm" href="#/transactions">View all</a></div></div>' +
+      '<div id="ovRecent"></div>';
+
+    // KPI tiles from /v1/stats
+    var statsEl = ctx.el.querySelector('#ovStats');
+    statsEl.innerHTML = skeletonCard();
+    PC.get('/v1/stats').then(function (s) {
+      statsEl.innerHTML =
+        '<div class="pc-stats">' +
+          statTile('Volume', money(s.volumeMinor), '<span class="pc-muted">captured, net of refunds</span>') +
+          statTile('Transactions', Number(s.count || 0).toLocaleString('en-US'),
+            '<span class="pc-muted">' + Number(s.byStatus && s.byStatus.captured || 0) + ' captured</span>') +
+          statTile('Success rate', pct(s.successRate), '<span class="pc-muted">authorized / total</span>') +
+          statTile('Refund rate', pct(s.refundRatio), '<span class="pc-muted">refunded / total</span>') +
+          statTile('Chargeback rate', pct(s.chargebackRatio), '<span class="pc-muted">disputes / total</span>') +
+        '</div>';
+    }).catch(function (err) {
+      if (isNotFound(err)) { statsEl.innerHTML = friendlyEmpty('No stats yet', 'KPIs will appear once you start taking payments.'); return; }
+      PC.toast(err.message || 'Could not load stats', { type: 'error' });
+      statsEl.innerHTML = friendlyEmpty('Could not load stats', err.message || '');
+    });
+
+    // Recent transactions (first 8)
+    var recentEl = ctx.el.querySelector('#ovRecent');
+    loadInto(recentEl,
+      function () { return PC.get('/v1/payments?limit=8'); },
+      function (rows) { return txTable(rows); },
+      { title: 'No transactions yet', message: 'Payments you take will show up here.',
+        comingTitle: 'No transactions yet', comingMsg: 'Payments you take will show up here.',
+        after: wireTxRows });
+  }
+
+  /* ---------------------------------------------------- TRANSACTIONS ----- */
+  var STATUS_FILTERS = ['', 'requires_action', 'authorized', 'captured', 'partial_refunded', 'refunded', 'voided', 'failed'];
+  var PAGE_SIZE = 25;
+
+  function txTable(rows) {
+    var head =
+      '<div class="pc-table-wrap"><div class="pc-table-scroll"><table class="pc-table"><thead><tr>' +
+        '<th>Payment</th><th>Status</th><th class="pc-num">Amount</th><th>Card</th>' +
+        '<th>Reference</th><th class="pc-nowrap">Created</th>' +
+      '</tr></thead><tbody>';
+    var body = rows.map(function (p) {
+      var card = (p.card_brand || p.card_last4)
+        ? PC.escape((p.card_brand || '').toUpperCase()) + (p.card_last4 ? ' ••' + PC.escape(p.card_last4) : '')
+        : '—';
+      return '<tr class="clickable" data-id="' + PC.escape(p.id) + '">' +
+        '<td class="pc-mono">' + PC.escape(String(p.id).slice(0, 8)) + '…</td>' +
+        '<td>' + PC.badge(p.status) + '</td>' +
+        '<td class="pc-num">' + moneyDec(p.amount) + '</td>' +
+        '<td>' + card + '</td>' +
+        '<td>' + (p.reference ? PC.escape(p.reference) : '<span class="pc-muted">—</span>') + '</td>' +
+        '<td class="pc-nowrap pc-muted">' + PC.fmtDate(p.created_at) + '</td>' +
+      '</tr>';
+    }).join('');
+    return head + body + '</tbody></table></div></div>';
+  }
+
+  // Wire row clicks -> fetch full payment -> drawer. We refetch by id so the
+  // drawer always reflects the latest server state (list rows may be stale).
+  function wireTxRows(mountEl) {
+    mountEl.querySelectorAll('tr.clickable').forEach(function (tr) {
+      tr.addEventListener('click', function () {
+        var id = tr.getAttribute('data-id');
+        PC.get('/v1/payments/' + id).then(showPaymentDrawer).catch(function (err) {
+          PC.toast(err.message || 'Could not load payment', { type: 'error' });
+        });
+      });
+    });
+  }
+
+  function viewTransactions(ctx) {
+    var status = ctx.params.status || '';
+    var page = Math.max(0, parseInt(ctx.params.page || '0', 10) || 0);
+
+    var options = STATUS_FILTERS.map(function (s) {
+      var label = s ? PC.statusLabel(s) : 'All statuses';
+      return '<option value="' + s + '"' + (s === status ? ' selected' : '') + '>' + label + '</option>';
+    }).join('');
+
+    ctx.el.innerHTML = pageHead('Transactions', 'All payments for your account.',
+      '<select class="pc-select" id="txStatus" style="min-width:170px">' + options + '</select>') +
+      '<div id="txList"></div><div class="pc-pager" id="txPager"></div>';
+
+    $('txStatus').addEventListener('change', function () {
+      var params = { page: '0' };
+      if (this.value) params.status = this.value;
+      ctx.go('transactions', params);
+    });
+
+    var listEl = ctx.el.querySelector('#txList');
+    // Fetch one extra to know if there's a next page. Backend paginates by
+    // limit/offset; we also filter by status client-side (the list endpoint does
+    // not itself narrow by status, so this keeps the filter honest).
+    var limit = PAGE_SIZE + 1;
+    var offset = page * PAGE_SIZE;
+    var qs = '/v1/payments?limit=' + limit + '&offset=' + offset + (status ? '&status=' + encodeURIComponent(status) : '');
+
+    loadInto(listEl,
+      function () {
+        return PC.get(qs).then(function (rows) {
+          rows = Array.isArray(rows) ? rows : [];
+          if (status) rows = rows.filter(function (p) { return p.status === status; });
+          return rows;
+        });
+      },
+      function (rows) {
+        var hasNext = rows.length > PAGE_SIZE;
+        var pageRows = rows.slice(0, PAGE_SIZE);
+        renderPager(hasNext, page, status, ctx);
+        return txTable(pageRows);
+      },
+      { title: status ? 'No ' + PC.statusLabel(status).toLowerCase() + ' payments' : 'No transactions yet',
+        message: 'Try a different status filter or take a payment.',
+        comingTitle: 'No transactions yet', comingMsg: 'Payments you take will show up here.',
+        after: function (el) { wireTxRows(el); if (page === 0) renderPager(false, page, status, ctx); } });
+  }
+
+  function renderPager(hasNext, page, status, ctx) {
+    var pager = $('txPager');
+    if (!pager) return;
+    var mk = function (label, targetPage, disabled) {
+      if (disabled) return '<button class="pc-btn pc-btn-secondary pc-btn-sm" disabled>' + label + '</button>';
+      return '<button class="pc-btn pc-btn-secondary pc-btn-sm" data-page="' + targetPage + '">' + label + '</button>';
+    };
+    pager.innerHTML =
+      '<span class="pc-muted">Page ' + (page + 1) + '</span>' +
+      '<span class="pc-hstack">' + mk('← Prev', page - 1, page <= 0) + mk('Next →', page + 1, !hasNext) + '</span>';
+    pager.querySelectorAll('[data-page]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var params = { page: b.getAttribute('data-page') };
+        if (status) params.status = status;
+        ctx.go('transactions', params);
+      });
+    });
+  }
+
+  /* -------------------------------------------------------- QR PAYMENTS -- */
+  function viewQR(ctx) {
+    ctx.el.innerHTML = pageHead('QR Payments', 'PromptPay & card-scheme QR transactions.',
+      '<button class="pc-btn pc-btn-primary pc-btn-sm" id="qrCreate">Create test QR</button>') +
+      '<div id="qrList"></div>';
+
+    $('qrCreate').addEventListener('click', openCreateQR);
+
+    var listEl = ctx.el.querySelector('#qrList');
+    loadInto(listEl,
+      function () { return PC.get('/v1/qr-payments?limit=50'); },
+      function (rows) { return qrTable(rows); },
+      { title: 'No QR payments yet', message: 'Create a test PromptPay QR to see it here.',
+        comingTitle: 'QR list coming soon',
+        comingMsg: 'Your gateway does not expose a QR list endpoint yet — you can still create a test QR above.' });
+  }
+
+  function qrTable(rows) {
+    var head =
+      '<div class="pc-table-wrap"><div class="pc-table-scroll"><table class="pc-table"><thead><tr>' +
+        '<th>QR</th><th>Method</th><th>Status</th><th class="pc-num">Amount</th>' +
+        '<th>Reference</th><th class="pc-nowrap">Expires</th>' +
+      '</tr></thead><tbody>';
+    var body = rows.map(function (q) {
+      return '<tr class="clickable" data-qr="' + PC.escape(q.id) + '">' +
+        '<td class="pc-mono">' + PC.escape(String(q.id).slice(0, 8)) + '…</td>' +
+        '<td>' + PC.escape((q.method || '').replace(/_/g, ' ')) + '</td>' +
+        '<td>' + PC.badge(q.status) + '</td>' +
+        '<td class="pc-num">' + moneyDec(q.amount) + '</td>' +
+        '<td>' + (q.reference ? PC.escape(q.reference) : '<span class="pc-muted">—</span>') + '</td>' +
+        '<td class="pc-nowrap pc-muted">' + PC.fmtDate(q.expires_at) + '</td>' +
+      '</tr>';
+    }).join('');
+    var tbl = head + body + '</tbody></table></div></div>';
+    // wire drawers after insert
+    setTimeout(function () {
+      document.querySelectorAll('tr[data-qr]').forEach(function (tr) {
+        tr.addEventListener('click', function () {
+          PC.get('/v1/qr-payments/' + tr.getAttribute('data-qr')).then(showQRDrawer)
+            .catch(function (e) { PC.toast(e.message || 'Could not load QR', { type: 'error' }); });
+        });
+      });
+    }, 0);
+    return tbl;
+  }
+
+  function showQRDrawer(q) {
+    openDrawer(
+      '<div class="pc-drawer-head">' +
+        '<div><div class="pc-muted" style="font-size:var(--pc-fs-11)">QR payment</div>' +
+          '<h3 style="font-size:var(--pc-fs-18)">' + moneyDec(q.amount) + '</h3></div>' +
+        '<div class="pc-hstack">' + PC.badge(q.status) +
+          '<button class="pc-modal-close" id="drawerClose" aria-label="Close">' +
+          '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>' +
+          '</button></div>' +
+      '</div>' +
+      '<div class="pc-drawer-body">' +
+        '<dl class="pc-kv">' +
+          kv('QR ID', '<span class="pc-mono">' + PC.escape(q.id) + '</span>') +
+          kv('Method', PC.escape((q.method || '').replace(/_/g, ' '))) +
+          kv('Status', PC.badge(q.status)) +
+          kv('Amount', moneyDec(q.amount)) +
+          kv('Reference', q.reference ? PC.escape(q.reference) : '—') +
+          kv('Payer bank', q.payer_bank ? PC.escape(q.payer_bank) : '—') +
+          kv('Provider ref', q.provider_ref ? '<span class="pc-mono">' + PC.escape(q.provider_ref) + '</span>' : '—') +
+          kv('Expires', PC.fmtDate(q.expires_at)) +
+          kv('Paid at', q.paid_at ? PC.fmtDate(q.paid_at) : '—') +
+          kv('Created', PC.fmtDate(q.created_at)) +
+        '</dl>' +
+        (q.qr_payload ? '<div class="pc-divider"></div><div class="pc-label">EMVCo payload</div>' +
+          '<div class="pc-secret">' + PC.escape(q.qr_payload) + copyBtn(q.qr_payload) + '</div>' : '') +
+      '</div>'
+    );
+    $('drawerClose').addEventListener('click', closeDrawer);
+  }
+
+  function openCreateQR() {
+    if (!MERCHANT || !MERCHANT.id) {
+      PC.toast('Merchant profile not loaded — cannot create QR', { type: 'warn' });
+      return;
+    }
+    var body = PC.el('div', { class: 'pc-form' });
+    body.innerHTML =
+      '<div class="pc-field"><label class="pc-label">Method</label>' +
+        '<select class="pc-select" id="qrMethod">' +
+          '<option value="promptpay_dynamic">PromptPay (dynamic)</option>' +
+          '<option value="promptpay_static">PromptPay (static)</option>' +
+          '<option value="card_scheme">Card-scheme QR</option>' +
+          '<option value="cross_border">Cross-border</option>' +
+        '</select></div>' +
+      '<div class="pc-row">' +
+        '<div class="pc-field"><label class="pc-label">Amount</label>' +
+          '<div class="pc-input-group"><span class="pc-affix">฿</span>' +
+          '<input class="pc-input" id="qrAmt" inputmode="decimal" value="100.00"></div></div>' +
+        '<div class="pc-field"><label class="pc-label">Currency</label>' +
+          '<input class="pc-input" id="qrCur" value="THB" maxlength="3"></div>' +
+      '</div>' +
+      '<div class="pc-field"><label class="pc-label">Reference</label>' +
+        '<input class="pc-input" id="qrRef" placeholder="INV-2026-0001"></div>';
+    var foot = PC.el('div');
+    var cancel = PC.el('button', { class: 'pc-btn pc-btn-secondary', text: 'Cancel', onclick: function () { m.close(); } });
+    var create = PC.el('button', {
+      class: 'pc-btn pc-btn-primary', text: 'Create QR',
+      onclick: function () {
+        var payload = {
+          merchant_id: MERCHANT.id,
+          method: document.getElementById('qrMethod').value,
+          amount: (document.getElementById('qrAmt').value || '0').trim(),
+          currency: (document.getElementById('qrCur').value || 'THB').trim().toUpperCase(),
+          reference: (document.getElementById('qrRef').value || '').trim(),
+        };
+        create.disabled = true;
+        PC.post('/v1/qr-payments', payload).then(function (q) {
+          m.close();
+          PC.toast('QR created', { type: 'success' });
+          showQRDrawer(q);
+          if (PC.router && PC.router.render) PC.router.render();
+        }).catch(function (err) {
+          create.disabled = false;
+          PC.toast(err.message || 'Could not create QR', { type: 'error', title: 'QR failed' });
+        });
+      },
+    });
+    foot.appendChild(cancel); foot.appendChild(create);
+    var m = PC.modal({ title: 'Create test QR', body: body, footer: foot });
+  }
+
+  /* ---------------------------------------------------------- DISPUTES -- */
+  function viewDisputes(ctx) {
+    ctx.el.innerHTML = pageHead('Disputes', 'Chargebacks and dispute cases against your payments.');
+    var mount = PC.el('div'); ctx.el.appendChild(mount);
+    loadInto(mount,
+      function () { return PC.get('/v1/disputes'); },
+      function (rows) {
+        var head =
+          '<div class="pc-table-wrap"><div class="pc-table-scroll"><table class="pc-table"><thead><tr>' +
+            '<th>Dispute</th><th>Payment</th><th>Status</th><th class="pc-num">Amount</th>' +
+            '<th>Reason</th><th class="pc-nowrap">Opened</th>' +
+          '</tr></thead><tbody>';
+        var b = rows.map(function (d) {
+          return '<tr>' +
+            '<td class="pc-mono">' + PC.escape(String(d.id).slice(0, 8)) + '…</td>' +
+            '<td class="pc-mono">' + PC.escape(String(d.payment_id).slice(0, 8)) + '…</td>' +
+            '<td>' + PC.badge(d.status) + '</td>' +
+            '<td class="pc-num">' + moneyDec(d.amount) + '</td>' +
+            '<td>' + (d.reason ? PC.escape(d.reason) : '<span class="pc-muted">—</span>') + '</td>' +
+            '<td class="pc-nowrap pc-muted">' + PC.fmtDate(d.opened_at || d.created_at) + '</td>' +
+          '</tr>';
+        }).join('');
+        return head + b + '</tbody></table></div></div>';
+      },
+      { title: 'No disputes', message: 'You have no chargebacks — nicely done.',
+        comingTitle: 'Disputes coming soon', comingMsg: 'This gateway does not expose disputes yet.' });
+  }
+
+  /* ------------------------------------------------------- SETTLEMENTS -- */
+  function viewSettlements(ctx) {
+    ctx.el.innerHTML = pageHead('Settlements', 'Your payout batches (amounts in ' + PC.escape((MERCHANT && MERCHANT.settlement_currency) || 'THB') + ').');
+    var mount = PC.el('div'); ctx.el.appendChild(mount);
+    loadInto(mount,
+      function () { return PC.get('/v1/settlements?limit=50'); },
+      function (rows) {
+        var head =
+          '<div class="pc-table-wrap"><div class="pc-table-scroll"><table class="pc-table"><thead><tr>' +
+            '<th>Payout</th><th>Status</th><th class="pc-num">Gross</th><th class="pc-num">Refunded</th>' +
+            '<th class="pc-num">Fees</th><th class="pc-num">Net</th><th class="pc-num">Txns</th>' +
+            '<th class="pc-nowrap">Period</th>' +
+          '</tr></thead><tbody>';
+        var b = rows.map(function (s) {
+          return '<tr>' +
+            '<td class="pc-mono">' + PC.escape(String(s.id).slice(0, 8)) + '…</td>' +
+            '<td>' + PC.badge(s.status) + '</td>' +
+            '<td class="pc-num">' + money(s.gross_minor) + '</td>' +
+            '<td class="pc-num">' + money(s.refunded_minor) + '</td>' +
+            '<td class="pc-num">' + money(s.fee_minor) + '</td>' +
+            '<td class="pc-num"><b>' + money(s.net_minor) + '</b></td>' +
+            '<td class="pc-num">' + Number(s.payment_count || 0) + '</td>' +
+            '<td class="pc-nowrap pc-muted">' + PC.fmtDate(s.period_start, { opts: { month: 'short', day: '2-digit' } }) +
+              ' – ' + PC.fmtDate(s.period_end, { opts: { month: 'short', day: '2-digit' } }) + '</td>' +
+          '</tr>';
+        }).join('');
+        return head + b + '</tbody></table></div></div>';
+      },
+      { title: 'No settlements yet', message: 'Payout batches appear here once your captured volume settles.',
+        comingTitle: 'Settlements coming soon', comingMsg: 'This gateway does not expose settlements yet.' });
+  }
+
+  /* -------------------------------------------------------- DEVELOPERS -- */
+  function viewDevelopers(ctx) {
+    var cfg = PC.config();
+    ctx.el.innerHTML =
+      pageHead('Developers', 'API configuration, key rotation and webhooks.') +
+      '<div class="pc-grid cols-2">' +
+        // API base
+        '<div class="pc-card"><div class="pc-card-head"><h4>Environment</h4></div>' +
+          '<div class="pc-card-body"><dl class="pc-kv">' +
+            kv('API base URL', '<span class="pc-mono">' + PC.escape(cfg.base) + '</span> ' + copyBtn(cfg.base)) +
+            kv('Merchant ID', MERCHANT && MERCHANT.id ? '<span class="pc-mono">' + PC.escape(MERCHANT.id) + '</span> ' + copyBtn(MERCHANT.id) : '—') +
+            kv('Settlement currency', PC.escape((MERCHANT && MERCHANT.settlement_currency) || '—')) +
+            kv('MCC', PC.escape((MERCHANT && MERCHANT.mcc) || '—')) +
+          '</dl></div></div>' +
+
+        // API key rotation
+        '<div class="pc-card"><div class="pc-card-head"><h4>API key</h4></div>' +
+          '<div class="pc-card-body">' +
+            '<p class="pc-muted" style="font-size:var(--pc-fs-13)">Rotating issues a new key and immediately invalidates the current one. Update your servers right away.</p>' +
+            '<div id="keyReveal"></div>' +
+            '<button class="pc-btn pc-btn-danger pc-btn-sm" id="rotateBtn">Rotate API key</button>' +
+          '</div></div>' +
+      '</div>' +
+
+      // Webhook
+      '<div style="margin-top:var(--pc-s5)"></div>' +
+      '<div class="pc-card"><div class="pc-card-head"><h4>Webhook endpoint</h4></div>' +
+        '<div class="pc-card-body">' +
+          '<p class="pc-muted" style="font-size:var(--pc-fs-13)">We POST signed event notifications to this URL. Saving rotates the signing secret (shown once).</p>' +
+          '<div class="pc-form" style="max-width:560px">' +
+            '<div class="pc-field"><label class="pc-label">Webhook URL</label>' +
+              '<input class="pc-input pc-mono" id="whUrl" placeholder="https://api.yourshop.com/paycore/webhook" value="' +
+                PC.escape((MERCHANT && MERCHANT.webhook_url) || '') + '"></div>' +
+            '<div id="whReveal"></div>' +
+            '<div><button class="pc-btn pc-btn-primary pc-btn-sm" id="whSave">Save webhook</button></div>' +
+          '</div>' +
+        '</div></div>';
+
+    $('rotateBtn').addEventListener('click', function () {
+      PC.confirm({
+        title: 'Rotate API key?', danger: true,
+        message: 'The current key stops working immediately. You will see the new key only once.',
+        confirmText: 'Rotate key',
+      }).then(function (yes) {
+        if (!yes) return;
+        var btn = $('rotateBtn'); btn.disabled = true;
+        PC.post('/v1/me/rotate-key', {}).then(function (res) {
+          var newKey = res.api_key;
+          PC.setKey(newKey); // keep the dashboard authenticated with the new key
+          $('keyReveal').innerHTML =
+            '<div class="pc-label" style="margin-bottom:6px">New API key — copy it now, it will not be shown again</div>' +
+            '<div class="pc-secret" style="margin-bottom:var(--pc-s4)">' + PC.escape(newKey) + copyBtn(newKey) + '</div>';
+          btn.disabled = false;
+          PC.toast('API key rotated. This dashboard now uses the new key.', { type: 'success' });
+        }).catch(function (err) {
+          btn.disabled = false;
+          PC.toast(err.message || 'Rotation failed', { type: 'error', title: 'Could not rotate key' });
+        });
+      });
+    });
+
+    $('whSave').addEventListener('click', function () {
+      var url = ($('whUrl').value || '').trim();
+      if (!/^https?:\/\//.test(url)) { PC.toast('Enter a valid https URL', { type: 'warn' }); return; }
+      var btn = $('whSave'); btn.disabled = true;
+      PC.api('/v1/me/webhook', { method: 'PUT', body: { url: url } }).then(function (cfg2) {
+        if (MERCHANT) MERCHANT.webhook_url = cfg2.webhook_url;
+        $('whReveal').innerHTML =
+          '<div class="pc-label" style="margin-bottom:6px">Signing secret — store it now, it will not be shown again</div>' +
+          '<div class="pc-secret">' + PC.escape(cfg2.signing_secret) + copyBtn(cfg2.signing_secret) + '</div>';
+        btn.disabled = false;
+        PC.toast('Webhook saved', { type: 'success' });
+      }).catch(function (err) {
+        btn.disabled = false;
+        PC.toast(err.message || 'Could not save webhook', { type: 'error', title: 'Webhook failed' });
+      });
+    });
+  }
+
+  /* =====================================================================
+     ROUTER
+     ===================================================================== */
+  var routerStarted = false;
+  function startRouter() {
+    if (routerStarted) { if (PC.router.render) PC.router.render(); return; }
+    routerStarted = true;
+    PC.router({
+      mount: '#view',
+      default: 'overview',
+      routes: {
+        overview:     wrap(viewOverview),
+        transactions: wrap(viewTransactions),
+        qr:           wrap(viewQR),
+        disputes:     wrap(viewDisputes),
+        settlements:  wrap(viewSettlements),
+        developers:   wrap(viewDevelopers),
+      },
+    });
+  }
+
+  // wrap each view so a thrown error becomes a friendly page, never a blank screen.
+  function wrap(fn) {
+    return function (ctx) {
+      closeDrawer();
+      try { fn(ctx); }
+      catch (e) {
+        console.error(e);
+        ctx.el.innerHTML = friendlyEmpty('Something went wrong', e.message || 'Please reload the page.',
+          '<button class="pc-btn pc-btn-secondary pc-btn-sm" onclick="location.reload()">Reload</button>');
+      }
+    };
+  }
+
+  /* ---------------------------------------------------------------- go -- */
+  boot();
+});
+</script>
+</body>
+</html>

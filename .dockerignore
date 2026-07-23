@@ -1,0 +1,15 @@
+bin/
+dist/
+docs/
+*.pem
+*.key
+*.crt
+.env
+.env.*
+.git/
+.claude/
+.DS_Store
+coverage.out
+coverage.html
+node_modules/
+README.md

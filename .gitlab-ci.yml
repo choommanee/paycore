@@ -1,0 +1,50 @@
+stages: [lint, test, build, security, deploy]
+
+variables:
+  GOFLAGS: "-mod=readonly"
+
+lint:
+  stage: lint
+  image: golangci/golangci-lint:latest
+  script: [golangci-lint run ./...]
+
+test:
+  stage: test
+  image: golang:1.22
+  services: [postgres:16-alpine]
+  variables:
+    POSTGRES_DB: payment_gateway
+    POSTGRES_USER: pg
+    POSTGRES_PASSWORD: pg
+    DATABASE_URL: "postgres://pg:pg@postgres:5432/payment_gateway?sslmode=disable"
+  script:
+    - go test ./... -race -coverprofile=cover.out
+    - go tool cover -func=cover.out
+  coverage: '/total:\s+\(statements\)\s+(\d+.\d+)%/'
+
+build:
+  stage: build
+  image: docker:26
+  services: [docker:26-dind]
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+
+sast:
+  stage: security
+  image: golang:1.22
+  script:
+    - go install golang.org/x/vuln/cmd/govulncheck@latest
+    - govulncheck ./...
+    # gosec must report 0 HIGH / 0 CRITICAL. .gosec.json narrows G101's
+    # identifier pattern so it stops flagging the sqlc-generated api-key-hash
+    # query const (a column name, not a secret) — see the rationale in that file.
+    - go install github.com/securego/gosec/v2/cmd/gosec@latest
+    - gosec -quiet -conf .gosec.json ./...
+  allow_failure: false
+
+deploy-staging:
+  stage: deploy
+  script: [echo "deploy to staging via your orchestrator"]
+  environment: { name: staging }
+  only: [main]

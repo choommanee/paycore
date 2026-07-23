@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PayCore — QR Checkout</title>
+<link rel="stylesheet" href="/assets/paycore.css" />
+<style>
+  /* Page-specific: centred QR-checkout card on the PayCore design system.
+     All colours/spacing/typography come from paycore.css tokens. */
+  body{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:var(--pc-s5)}
+  .co{width:100%;max-width:380px;text-align:center}
+  .co .pc-card-body{padding:var(--pc-s5)}
+  .co-brand{display:flex;align-items:center;gap:var(--pc-s3);margin-bottom:var(--pc-s4);text-align:left}
+  .co-brand .co-store{font-size:var(--pc-fs-15);font-weight:600}
+  /* segmented Card / QR toggle */
+  .seg{display:flex;gap:6px;background:var(--pc-line-2);border-radius:var(--pc-r);padding:4px;margin-bottom:var(--pc-s5)}
+  .seg button{flex:1;height:34px;border:none;background:transparent;border-radius:7px;
+       font-size:var(--pc-fs-13);font-family:inherit;color:var(--pc-muted);cursor:pointer;font-weight:500}
+  .seg button.on{background:var(--pc-surface);color:var(--pc-ink);font-weight:600;box-shadow:var(--pc-sh-1)}
+  .pphead{display:flex;align-items:center;justify-content:center;gap:8px;
+       background:#003d7a;color:#fff;border-radius:var(--pc-r) var(--pc-r) 0 0;padding:10px;font-weight:600;font-size:var(--pc-fs-14);letter-spacing:.5px}
+  .qrbox{border:1px solid var(--pc-line);border-top:none;border-radius:0 0 var(--pc-r) var(--pc-r);padding:var(--pc-s5)}
+  #qr{display:flex;justify-content:center}
+  #qr img,#qr canvas{border-radius:6px}
+  .amt{font-size:var(--pc-fs-28);font-weight:700;margin:var(--pc-s4) 0 2px;font-variant-numeric:tabular-nums}
+  .ref{font-size:var(--pc-fs-12);color:var(--pc-muted)}
+  .timer{display:inline-flex;align-items:center;gap:6px;margin:var(--pc-s4) 0;padding:6px 12px;
+       background:var(--pc-warn-bg);color:var(--pc-warn);border-radius:var(--pc-r-pill);font-size:var(--pc-fs-13);font-weight:600}
+  .timer.hidden{display:none}
+  .status{display:flex;align-items:center;justify-content:center;gap:8px;font-size:var(--pc-fs-13);color:var(--pc-muted);margin-top:6px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--pc-accent);animation:pulse 1.2s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  .paid{color:var(--pc-success);margin-top:var(--pc-s3)}
+  .ok{width:56px;height:56px;border-radius:50%;background:var(--pc-success-bg);color:var(--pc-success);
+       display:flex;align-items:center;justify-content:center;font-size:30px;margin:var(--pc-s2) auto}
+  .paid-amt{margin:var(--pc-s1) 0 0}
+  .paid-head{margin:var(--pc-s1) 0}
+  .hint{font-size:var(--pc-fs-11);color:var(--pc-muted);margin-top:var(--pc-s3);line-height:1.5}
+  .card-note{padding:var(--pc-s8) var(--pc-s3);color:var(--pc-muted);font-size:var(--pc-fs-13)}
+  /* Dead-QR state: dim the code + stop the pulse so a payer never scans an
+     expired/failed QR. */
+  #qr.dead{opacity:.25;filter:grayscale(1)}
+  .status.dead{flex-direction:column;gap:4px}
+  .status.dead .dot{display:none}
+  .status.error{color:var(--pc-danger)}
+</style>
+</head>
+<body>
+  <div class="co pc-card">
+   <div class="pc-card-body">
+    <div class="co-brand"><span data-pc-logo="mark" data-size="28"></span><span class="co-store">Acme Store</span></div>
+
+    <div class="seg">
+      <button type="button" id="tabCard">Card</button>
+      <button type="button" id="tabQR" class="on">Thai QR</button>
+    </div>
+
+    <div id="qrView">
+      <div class="pphead">THAI QR PAYMENT</div>
+      <div class="qrbox">
+        <div id="qr"></div>
+        <div class="amt" id="amt">฿1,290.00</div>
+        <div class="ref" id="ref">Ref: INV-2026-00841</div>
+      </div>
+      <div class="timer" id="timer">⏱ 14:59</div>
+      <div class="status" id="status"><span class="dot"></span> Waiting for payment…</div>
+      <div class="hint">📱 สแกน QR ด้วยกล้องมือถือ → เปิดแอปธนาคารจำลอง (Sandbox) → ยืนยันจ่าย<br/>โหมดทดสอบ ไม่มีการโอนเงินจริง</div>
+      <!-- Sandbox testing: open the "Sandbox Bank" simulator (a fake mobile-banking
+           app) to pay this QR without real money. Only works when the server runs
+           with SANDBOX_MODE=true; hidden until a real qr id is created. -->
+      <a id="sandboxLink" class="pc-btn pc-btn-secondary pc-btn-sm" href="/sandbox/"
+         style="margin-top:12px;display:inline-flex" target="_blank" rel="noopener">
+        🏦 เปิดแอปธนาคารจำลอง (Sandbox)
+      </a>
+      <div id="sbNote" class="hint" style="margin-top:6px">กำลังสร้าง QR…</div>
+    </div>
+
+    <div id="cardView" class="pc-hide">
+      <div class="card-note">↑ สลับไปแท็บ Card เพื่อจ่ายด้วยบัตร (ดู index.html)</div>
+    </div>
+   </div>
+  </div>
+
+<script src="/assets/paycore.js" defer></script>
+<script src="/assets/qrcode.min.js"></script>
+<script>
+/* ---- QR checkout — real gateway calls ----
+   The QR payload comes from POST /v1/qr-payments (the gateway builds the EMVCo
+   PromptPay MPM payload via internal/pkg/promptpay/emv.go). We render that
+   payload, then POLL GET /v1/qr-payments/{id} until status is `paid` or `expired`
+   (replacing the old 6-second fake). The local promptpayDynamic() builder below
+   is kept ONLY as an offline fallback / reference mirror of the Go builder. */
+
+/* ================= AUTH MODEL — READ BEFORE SHIPPING =================
+   POST /v1/qr-payments and GET /v1/qr-payments/{id} below carry NO
+   Authorization / X-API-Key header. That is DELIBERATE:
+
+     A secret merchant API key (sk_live_...) MUST NEVER live in browser JS.
+
+   Against a real server those routes are behind APIKeyAuth, so these calls
+   return 401 and the demo only works via its offline fallback. Use the hosted-
+   checkout flow instead: your server issues a SHORT-LIVED, single-payment
+   session token that is safe for the browser, and the browser calls an
+   UNAUTHENTICATED checkout-session route group with it (never the secret key).
+   The /v1/webhooks/qr HMAC signing block below is server-to-server ONLY and is
+   present here purely for LOCAL testing — its secret must stay server-side.
+   See README.md "Hosted checkout & auth model". */
+
+// Base URL is configurable: ?api=... query param, window.PAYCORE_API, else the
+// same origin the page is served from (works locally and on a hosted deploy).
+const API_BASE = new URLSearchParams(location.search).get('api')
+  || window.PAYCORE_API || location.origin;
+
+// Merchant key used to create/poll the QR (both are authenticated). Resolved
+// from ?key=, window.PAYCORE_KEY, or the same-origin dashboard session. When
+// none is present we AUTO-ONBOARD a throwaway sandbox merchant (the public
+// POST /v1/merchants) so the demo always produces a REAL, scannable QR — the key
+// is cached in localStorage so page reloads reuse one merchant (no signup spam).
+// A real production checkout would NEVER embed a merchant secret.
+let SESSION_KEY = new URLSearchParams(location.search).get('key')
+  || window.PAYCORE_KEY
+  || (function(){ try { return localStorage.getItem('paycore.key') || localStorage.getItem('paycore.demo_key'); } catch(_){ return null; } })();
+function authHeaders(h){ h = h || {}; if (SESSION_KEY) h['Authorization'] = 'Bearer ' + SESSION_KEY; return h; }
+
+// Ensure we have a usable key; auto-onboard a sandbox merchant if not.
+async function ensureKey(){
+  if (SESSION_KEY) return SESSION_KEY;
+  const res = await fetch(API_BASE + '/v1/merchants', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Sandbox Checkout Demo', mcc: '5814', settlement_currency: 'THB' }),
+  });
+  const data = await apiJson(res);        // { ..., api_key }
+  SESSION_KEY = data.api_key;
+  try { localStorage.setItem('paycore.demo_key', SESSION_KEY); } catch(_){}
+  return SESSION_KEY;
+}
+
+const AMOUNT_DECIMAL = '1290.00';           // decimal string (major units)
+const CURRENCY = 'THB';
+// Unique per QR creation. The gateway enforces UNIQUE(merchant_id, reference),
+// so a fixed reference would 500 on the 2nd+ QR from the same merchant. Each
+// page load / QR mint gets a fresh reference.
+const REFERENCE = 'INV-' + Date.now().toString(36).toUpperCase()
+  + '-' + Math.floor(Math.random() * 1e6).toString(36).toUpperCase();
+const MERCHANT_ID = '00000000-0000-0000-0000-000000000001';
+
+// Prefer the shared PayCore money formatter; fall back to a local formatter if
+// paycore.js has not finished loading (it is deferred).
+function fmtBaht(dec){
+  if (window.PC && PC.moneyFromDecimal) return PC.moneyFromDecimal(dec);
+  return '฿' + Number(dec).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+
+// --- Offline reference: mirror of the Go promptpay.Build() (fallback only) ---
+function tlv(id,v){ return id + String(v.length).padStart(2,'0') + v; }
+function crc16(s){
+  let crc=0xFFFF;
+  for(const ch of s){ crc^=ch.charCodeAt(0)<<8;
+    for(let i=0;i<8;i++){ crc = (crc&0x8000)? ((crc<<1)^0x1021):(crc<<1); crc&=0xFFFF; } }
+  return crc.toString(16).toUpperCase().padStart(4,'0');
+}
+function promptpayDynamic(mobile, amount, ref){
+  const m = '66' + mobile.replace(/\D/g,'').replace(/^0/,'');
+  const acct = tlv('00','A000000677010111') + tlv('01', m.padStart(13,'0'));
+  let p = tlv('00','01') + tlv('01','12') + tlv('29',acct) + tlv('53','764') +
+          tlv('54', amount.toFixed(2)) + tlv('58','TH') + tlv('62', tlv('01',ref));
+  p += '6304';
+  return p + crc16(p);
+}
+
+/* ---- Webhook HMAC signature (for LOCAL testing of POST /v1/webhooks/qr) ----
+   The bank/PSP signs the raw JSON body and sends it in the `X-Signature` header;
+   the gateway verifies it in QRProvider.VerifyWebhook before trusting the body.
+   Convention below: HMAC-SHA256 over the exact raw body bytes, hex-encoded — the
+   most common scheme. Adjust the digest encoding (hex vs base64) and any prefix
+   to match whatever VerifyWebhook expects once it is implemented.
+
+   Example — sign and POST a fake confirmation from a devtools console / Node:
+
+     const body = JSON.stringify({
+       reference: "INV-2026-00841", provider_ref: "psp_txn_123",
+       amount: "1290.00", currency: "THB", payer_bank: "SCB",
+       status: "paid", paid_at: new Date().toISOString()
+     });
+     const sig = await hmacSha256Hex("whsec_local_dev_secret", body);
+     await fetch(API_BASE + "/v1/webhooks/qr", {
+       method: "POST",
+       headers: { "Content-Type": "application/json", "X-Signature": sig },
+       body,                       // must be the SAME bytes that were signed
+     });
+*/
+async function hmacSha256Hex(secret, body){
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw', enc.encode(secret), { name:'HMAC', hash:'SHA-256' }, false, ['sign']);
+  const mac = await crypto.subtle.sign('HMAC', key, enc.encode(body));
+  return [...new Uint8Array(mac)].map(b => b.toString(16).padStart(2,'0')).join('');
+}
+window.hmacSha256Hex = hmacSha256Hex; // exposed for local testing
+
+// Unwrap the standard { success, code, data, ... } API envelope.
+async function apiJson(res){
+  let body = null;
+  try { body = await res.json(); } catch(_){}
+  if(!res.ok || (body && body.success === false)){
+    const msg = (body && (body.message || body.code)) || ('HTTP ' + res.status);
+    const err = new Error(msg); err.status = res.status; throw err;
+  }
+  return body ? body.data : null;
+}
+
+let countdown = null, poll = null;
+
+function stopTimers(){ if(countdown) clearInterval(countdown); if(poll) clearInterval(poll); }
+
+// markDead dims the QR and stops the "waiting" pulse so the payer does not scan a
+// code that can no longer be paid. label distinguishes expired vs failed.
+function markDead(label, isError){
+  stopTimers();
+  document.getElementById('qr').classList.add('dead');
+  const timer = document.getElementById('timer');
+  if(timer) timer.classList.add('hidden');
+  const status = document.getElementById('status');
+  status.classList.add('dead');
+  if(isError) status.classList.add('error');
+  status.innerHTML = label +
+    ' <button class="pc-btn pc-btn-secondary pc-btn-sm" type="button" onclick="location.reload()">Try again</button>';
+}
+
+function showExpired(){ markDead('⌛ QR expired — please generate a new one', false); }
+function showFailed(){  markDead('⚠ Payment failed — please try again', true); }
+
+function showPaid(qp){
+  stopTimers();
+  document.getElementById('qrView').innerHTML =
+    '<div class="ok">✓</div><h3 class="paid-head">Payment received</h3>'+
+    '<p class="ref paid-amt">'+fmtBaht(qp.amount)+
+      (qp.payer_bank ? ' · via '+qp.payer_bank : '')+' · '+qp.id+'</p>'+
+    '<div class="status paid">✓ Confirmed by bank</div>';
+}
+
+// Poll GET /v1/qr-payments/{id} until paid or expired.
+function startPolling(id){
+  poll = setInterval(async ()=>{
+    try {
+      const res = await fetch(API_BASE + '/v1/qr-payments/' + id, { headers: authHeaders() });
+      const qp = await apiJson(res);
+      if(qp.status === 'paid'){ showPaid(qp); }
+      else if(qp.status === 'expired'){ showExpired(); }
+      else if(qp.status === 'failed'){ showFailed(); }
+    } catch(_){ /* transient network error — keep polling */ }
+  }, 2500);
+}
+
+// Create the QR payment, render the returned payload, then drive the timers.
+async function initQR(){
+  document.getElementById('amt').textContent = fmtBaht(AMOUNT_DECIMAL);
+  document.getElementById('ref').textContent = 'Ref: ' + REFERENCE;
+
+  let payload, expiresAt;
+  try {
+    // Make sure we have a merchant key (auto-onboard a sandbox merchant if none),
+    // then mint a REAL QR so it is always scannable / payable via the simulator.
+    await ensureKey();
+    const res = await fetch(API_BASE + '/v1/qr-payments', {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        method: 'promptpay_dynamic',
+        amount: AMOUNT_DECIMAL,
+        currency: CURRENCY,
+        reference: REFERENCE,
+        expires_in_seconds: 900,
+      }),
+    });
+    const qp = await apiJson(res);
+    expiresAt = new Date(qp.expires_at).getTime();
+    startPolling(qp.id);
+    // SANDBOX: encode the QR as a DEEP LINK to the Sandbox Bank simulator (an
+    // absolute https URL), NOT the raw EMVCo/PromptPay payload. Scanning it with a
+    // phone camera opens the Sandbox Bank on the phone for this exact QR — safe,
+    // no real transfer. (qp.qr_payload holds the real EMVCo payload, for devs.)
+    const deepLink = location.origin + '/sandbox/?qr=' + encodeURIComponent(qp.id);
+    payload = deepLink;
+    window.__qrEmvco = qp.qr_payload;
+    const sb = document.getElementById('sandboxLink');
+    if (sb) sb.href = deepLink;
+    const sbn = document.getElementById('sbNote');
+    if (sbn) sbn.innerHTML = '✓ พร้อมจ่าย — 📱 สแกน QR นี้ด้วยแอปธนาคารจำลองบนมือถือ หรือกดปุ่มด้านบน (จอเดียวกัน)';
+  } catch(err){
+    // Genuine failure (e.g. signup rate-limited, or gateway unreachable). Render a
+    // local preview QR so the box is not empty, and explain clearly.
+    payload = promptpayDynamic('0812345678', Number(AMOUNT_DECIMAL), REFERENCE);
+    expiresAt = Date.now() + 15*60*1000;
+    const sbn = document.getElementById('sbNote');
+    const rateLimited = /429|too many|rate/i.test(err.message || '');
+    document.getElementById('status').innerHTML =
+      '<span class="dot"></span> ' + (rateLimited ? 'สมัครร้านทดสอบถูกจำกัดชั่วคราว' : 'เชื่อม API ไม่สำเร็จ');
+    if (sbn) sbn.innerHTML = rateLimited
+      ? '⚠️ สร้างร้านทดสอบบ่อยเกินไป (จำกัด 5/ชม.) — รอสักครู่แล้วรีเฟรช หรือเปิดด้วย <b>?key=YOUR_KEY</b> ของคุณเอง'
+      : ('⚠️ QR นี้เป็นตัวอย่าง จ่ายผ่าน sandbox ไม่ได้: ' + (err.message || 'gateway unreachable'));
+  }
+
+  // A missing payload (e.g. the server returned an unexpected shape) must surface
+  // as a clear error rather than a broken/empty QR box.
+  if(!payload){
+    markDead('⚠ Could not load QR — please try again', true);
+    return;
+  }
+  // Render the scannable QR. If the QR library somehow failed to load, don't
+  // leave an empty box — fall back to a big tappable link so the flow still works.
+  try {
+    if (typeof QRCode === 'undefined') throw new Error('QR library not loaded');
+    new QRCode(document.getElementById('qr'), { text: payload, width: 180, height: 180,
+      colorDark:'#0f1729', colorLight:'#ffffff', correctLevel: QRCode.CorrectLevel.M });
+  } catch (e) {
+    const link = /^https?:/.test(payload) ? payload : ('/sandbox/' );
+    document.getElementById('qr').innerHTML =
+      '<a href="'+link+'" target="_blank" rel="noopener" class="pc-btn pc-btn-primary">📱 แตะเพื่อเปิดแอปธนาคารจำลอง</a>';
+  }
+
+  // countdown driven by the server-provided expires_at
+  countdown = setInterval(()=>{
+    const left = Math.max(0, Math.round((expiresAt - Date.now())/1000));
+    const m=String(Math.floor(left/60)).padStart(2,'0'), s=String(left%60).padStart(2,'0');
+    document.getElementById('timer').textContent = '⏱ '+m+':'+s;
+    if(left<=0){ showExpired(); }
+  }, 1000);
+}
+
+initQR();
+
+// tab toggle
+document.getElementById('tabCard').onclick = ()=>{ toggle(false); };
+document.getElementById('tabQR').onclick   = ()=>{ toggle(true); };
+function toggle(qr){
+  document.getElementById('tabQR').classList.toggle('on', qr);
+  document.getElementById('tabCard').classList.toggle('on', !qr);
+  document.getElementById('qrView').classList.toggle('pc-hide', !qr);
+  document.getElementById('cardView').classList.toggle('pc-hide', qr);
+}
+</script>
+</body>
+</html>

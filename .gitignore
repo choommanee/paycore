@@ -1,0 +1,24 @@
+# Secrets and local config — never commit. .env.example (with placeholders) stays committed.
+.env
+.env.*
+!.env.example
+
+# TLS material and keys
+*.pem
+*.key
+*.crt
+*.p12
+
+# Build artifacts
+/bin/
+/dist/
+*.exe
+*.out
+coverage.out
+coverage.html
+
+# Editor / OS cruft
+.DS_Store
+.idea/
+.vscode/
+*.swp
