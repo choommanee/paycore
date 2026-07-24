@@ -9,7 +9,9 @@ import (
 
 // Setup registers all routes. The auth argument is the API-key auth middleware
 // applied to merchant-scoped route groups; health probes, the QR webhook and
-// merchant onboarding stay open. adminAuth gates the /v1/admin operator console
+// merchant onboarding stay open. sessionAuth is the dashboard human-login
+// session middleware (pc_session cookie) gating GET /v1/auth/me; it has no
+// effect unless h.Auth is wired. adminAuth gates the /v1/admin operator console
 // (X-Admin-Key, constant-time compare). rateLimit is a per-merchant limiter
 // mounted on the money route groups only (nil disables it). metrics, when
 // non-nil, is mounted at /metrics on the public listener — pass nil to keep it
@@ -20,8 +22,8 @@ import (
 // endpoint (nil disables it). sandbox, when true, mounts the PUBLIC sandbox
 // payer-simulator endpoints (/v1/sandbox/...) — it MUST be false in production
 // so those routes are completely absent (404) and no one can mark payments paid
-// without a signed bank webhook.
-func Setup(app *fiber.App, h *handler.Handlers, auth, adminAuth, rateLimit, signupLimit fiber.Handler, metrics fiber.Handler, webDir string, sandbox bool) {
+// without a signed bank webhook; it also gates POST /v1/auth/dev-login.
+func Setup(app *fiber.App, h *handler.Handlers, auth, sessionAuth, adminAuth, rateLimit, signupLimit fiber.Handler, metrics fiber.Handler, webDir string, sandbox bool) {
 	// Health / probes (no auth, never rate limited).
 	app.Get("/healthz", h.Health.Live)
 	app.Get("/readyz", h.Health.Ready)
@@ -53,6 +55,17 @@ func Setup(app *fiber.App, h *handler.Handlers, auth, adminAuth, rateLimit, sign
 	v1.Get("/stats", auth, h.Merchant.Stats)
 	v1.Get("/settlements", auth, h.Merchant.Settlements)
 	v1.Get("/disputes", auth, h.Dispute.ListByMerchant)
+
+	// Dashboard human auth (Google OIDC + session cookie). Public except /me.
+	if h.Auth != nil {
+		v1.Get("/auth/google/start", h.Auth.GoogleStart)
+		v1.Get("/auth/google/callback", h.Auth.GoogleCallback)
+		v1.Post("/auth/logout", h.Auth.Logout)
+		v1.Get("/auth/me", sessionAuth, h.Auth.Me)
+		if sandbox {
+			v1.Post("/auth/dev-login", h.Auth.DevLogin)
+		}
+	}
 
 	// Payments require merchant API-key auth. The resolved merchant scopes every
 	// request. The rate limiter is mounted AFTER auth so it keys per merchant.

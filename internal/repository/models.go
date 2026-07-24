@@ -56,6 +56,20 @@ type Merchant struct {
 	WebhookSecretHash  *string            `json:"webhook_secret_hash"`
 }
 
+type MerchantUser struct {
+	ID            pgtype.UUID        `json:"id"`
+	MerchantID    pgtype.UUID        `json:"merchant_id"`
+	Email         string             `json:"email"`
+	Name          string             `json:"name"`
+	AvatarUrl     string             `json:"avatar_url"`
+	OauthProvider string             `json:"oauth_provider"`
+	OauthSubject  string             `json:"oauth_subject"`
+	Role          string             `json:"role"`
+	LastLoginAt   pgtype.Timestamptz `json:"last_login_at"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Payment struct {
 	ID                  pgtype.UUID        `json:"id"`
 	MerchantID          pgtype.UUID        `json:"merchant_id"`

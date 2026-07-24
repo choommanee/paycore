@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/spf13/viper"
@@ -68,6 +69,19 @@ type Config struct {
 
 	JWTSecret       string `mapstructure:"JWT_SECRET"`
 	IdempotencyTTLs int    `mapstructure:"IDEMPOTENCY_TTL_SECONDS"`
+
+	// Google OIDC credentials for merchant dashboard login. Empty disables the
+	// Google login button; dev-login (sandbox) still works.
+	GoogleClientID     string `mapstructure:"GOOGLE_CLIENT_ID"`
+	GoogleClientSecret string `mapstructure:"GOOGLE_CLIENT_SECRET"`
+
+	// OAuthRedirectBase is the public origin of the Next.js app (e.g.
+	// https://app.paycore.example). The Google redirect_uri is built as
+	// <base>/api/auth/google/callback so the browser stays on one origin.
+	OAuthRedirectBase string `mapstructure:"OAUTH_REDIRECT_BASE"`
+
+	// SessionTTLHours is the lifetime of the pc_session cookie. Default 168 (7d).
+	SessionTTLHours int `mapstructure:"SESSION_TTL_HOURS"`
 
 	// KMS / HSM references used by the tokenization vault.
 	KMSKeyID       string `mapstructure:"KMS_KEY_ID"`
@@ -135,6 +149,7 @@ var envKeys = []string{
 	"MIGRATE_ON_BOOT", "DB_MAX_CONNS", "DB_MIN_CONNS",
 	"METRICS_ADDR", "METRICS_PUBLIC", "DATABASE_URL",
 	"JWT_SECRET", "IDEMPOTENCY_TTL_SECONDS", "KMS_KEY_ID", "VAULT_NAMESPACE",
+	"GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "OAUTH_REDIRECT_BASE", "SESSION_TTL_HOURS",
 	"ACQUIRER_BASE_URL", "ACQUIRER_API_KEY", "ADMIN_API_KEY", "WEB_DIR",
 	"QR_WEBHOOK_SECRET", "WEBHOOK_SIGNING_SECRET", "WEBHOOK_DEFAULT_URL",
 	"WEBHOOK_MAX_ATTEMPTS", "SETTLEMENT_FEE_BPS", "QR_PROVIDER_BASE_URL",
@@ -158,6 +173,7 @@ func Load() (*Config, error) {
 	v.SetDefault("METRICS_PUBLIC", false)
 	v.SetDefault("WEB_DIR", "./web")
 	v.SetDefault("SANDBOX_MODE", false)
+	v.SetDefault("SESSION_TTL_HOURS", 168)
 
 	v.SetConfigFile(".env")
 	v.SetConfigType("env")
@@ -281,6 +297,16 @@ func (c *Config) LogLevel() zerolog.Level {
 }
 
 func (c *Config) IsProd() bool { return strings.EqualFold(c.Env, "production") }
+
+// SessionTTL returns the pc_session cookie lifetime. Falls back to 7 days when
+// SESSION_TTL_HOURS is unset or non-positive.
+func (c *Config) SessionTTL() time.Duration {
+	h := c.SessionTTLHours
+	if h <= 0 {
+		h = 168
+	}
+	return time.Duration(h) * time.Hour
+}
 
 // IsSandbox reports whether the public sandbox payer-simulator endpoints should
 // be mounted. It is the single gate the router checks; when false the sandbox
