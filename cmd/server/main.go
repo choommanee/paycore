@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,7 +20,9 @@ import (
 	"github.com/yourco/payment-gateway/internal/middleware"
 	"github.com/yourco/payment-gateway/internal/pkg/crypto"
 	"github.com/yourco/payment-gateway/internal/pkg/metrics"
+	"github.com/yourco/payment-gateway/internal/pkg/oauth"
 	"github.com/yourco/payment-gateway/internal/pkg/promptpay"
+	"github.com/yourco/payment-gateway/internal/pkg/session"
 	"github.com/yourco/payment-gateway/internal/repository"
 	"github.com/yourco/payment-gateway/internal/router"
 	"github.com/yourco/payment-gateway/internal/service"
@@ -171,6 +174,27 @@ func main() {
 		logger.Warn().Msg("SANDBOX_MODE=true: public /v1/sandbox payer-simulator endpoints are ENABLED (must be off in production)")
 	}
 
+	// Dashboard human auth: Google OIDC login + signed pc_session cookie.
+	// oauthProvider stays nil (GoogleStart/Callback 503) when GOOGLE_CLIENT_ID is
+	// unset, e.g. local dev relying solely on sandbox dev-login.
+	sessions := session.NewManager(cfg.JWTSecret, cfg.SessionTTL())
+	authSvc := service.NewAuthService(repo, logger)
+	var oauthProvider oauth.OAuthProvider
+	if cfg.GoogleClientID != "" {
+		oauthProvider = oauth.NewGoogle(
+			cfg.GoogleClientID, cfg.GoogleClientSecret,
+			strings.TrimRight(cfg.OAuthRedirectBase, "/")+"/api/auth/google/callback",
+		)
+	}
+	authHandler := handler.NewAuthHandler(authSvc, sessions, oauthProvider, handler.AuthConfig{
+		Secure:            cfg.IsProd(),
+		SessionTTL:        cfg.SessionTTL(),
+		Sandbox:           cfg.SandboxMode,
+		PostLoginRedirect: "/",
+	}, logger)
+	h = h.WithAuth(authHandler)
+	sessionAuth := middleware.SessionAuth(sessions)
+
 	// Behind a trusted TLS-terminating upstream (Railway/Fly/LB) the socket peer
 	// is the platform's proxy — and its source IP rotates, which breaks per-IP
 	// rate limiting (each request looks like a new client) and pollutes audit
@@ -212,7 +236,7 @@ func main() {
 	if cfg.MetricsPublic {
 		publicMetrics = middleware.MetricsHandler(metricsSet)
 	}
-	router.Setup(app, h, auth, adminAuth, rateLimit, signupLimit, publicMetrics, cfg.WebDir, cfg.SandboxMode)
+	router.Setup(app, h, auth, sessionAuth, adminAuth, rateLimit, signupLimit, publicMetrics, cfg.WebDir, cfg.SandboxMode)
 
 	// Separate internal metrics listener (not the public money API).
 	var metricsApp *fiber.App

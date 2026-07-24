@@ -18,12 +18,21 @@ type Handlers struct {
 	// SANDBOX_MODE is enabled (set via WithSandbox in main); the router mounts the
 	// sandbox routes only when it is non-nil.
 	Sandbox *SandboxHandler
+	// Auth serves dashboard human login (Google OIDC + session cookie). Attached
+	// via WithAuth in main; the router mounts the auth routes only when non-nil.
+	Auth *AuthHandler
 }
 
 // WithSandbox attaches the sandbox payer-simulator handler. Called from main
 // ONLY when SANDBOX_MODE=true so the routes stay absent (404) otherwise.
 func (h *Handlers) WithSandbox(svc service.SandboxService, log zerolog.Logger) *Handlers {
 	h.Sandbox = NewSandboxHandler(svc, log)
+	return h
+}
+
+// WithAuth attaches the dashboard auth handler (Google OIDC + session).
+func (h *Handlers) WithAuth(a *AuthHandler) *Handlers {
+	h.Auth = a
 	return h
 }
 
