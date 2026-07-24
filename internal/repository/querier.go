@@ -31,6 +31,7 @@ type Querier interface {
 	// hash (api_key_hash). Auth resolves a merchant by hashing the presented key and
 	// matching it here. All parameters are bound ($1, $2, ...).
 	CreateMerchant(ctx context.Context, arg CreateMerchantParams) (Merchant, error)
+	CreateMerchantUser(ctx context.Context, arg CreateMerchantUserParams) (MerchantUser, error)
 	// internal/repository/queries/payment.sql
 	// sqlc generates type-safe Go from these queries. All parameters are bound
 	// ($1, $2, ...) so there is no SQL-injection surface.
@@ -47,6 +48,11 @@ type Querier interface {
 	GetDispute(ctx context.Context, id pgtype.UUID) (Dispute, error)
 	GetMerchant(ctx context.Context, id pgtype.UUID) (Merchant, error)
 	GetMerchantByAPIKeyHash(ctx context.Context, apiKeyHash string) (Merchant, error)
+	GetMerchantUserByID(ctx context.Context, id pgtype.UUID) (MerchantUser, error)
+	// internal/repository/queries/merchant_user.sql
+	// Dashboard human identities. Login resolves a user by (provider, subject); a
+	// first-time identity is created together with its merchant by the service layer.
+	GetMerchantUserByOAuth(ctx context.Context, arg GetMerchantUserByOAuthParams) (MerchantUser, error)
 	GetPayment(ctx context.Context, id pgtype.UUID) (Payment, error)
 	// Merchant-scoped fetch: only returns the row when it belongs to the
 	// authenticated merchant, avoiding a cross-tenant existence oracle (returns
@@ -116,6 +122,7 @@ type Querier interface {
 	// secret. Only the hash of the signing secret is stored; the raw secret is
 	// returned once by the service layer.
 	SetMerchantWebhook(ctx context.Context, arg SetMerchantWebhookParams) (Merchant, error)
+	TouchMerchantUserLogin(ctx context.Context, id pgtype.UUID) error
 	UpdateDisputeStatus(ctx context.Context, arg UpdateDisputeStatusParams) (Dispute, error)
 	UpdatePaymentStatus(ctx context.Context, arg UpdatePaymentStatusParams) (Payment, error)
 	UpdateQRStatus(ctx context.Context, arg UpdateQRStatusParams) (QrPayment, error)
