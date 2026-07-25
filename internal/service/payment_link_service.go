@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -34,7 +35,7 @@ type paymentLinkService struct {
 // checkout URL is built on (e.g. the Next app origin); the URL is
 // <baseURL>/pay/<public_id>.
 func NewPaymentLinkService(repo repository.Querier, publicBaseURL string, log zerolog.Logger) PaymentLinkService {
-	return &paymentLinkService{repo: repo, baseURL: strings_TrimRightSlash(publicBaseURL), log: log.With().Str("service", "payment_link").Logger()}
+	return &paymentLinkService{repo: repo, baseURL: strings.TrimRight(publicBaseURL, "/"), log: log.With().Str("service", "payment_link").Logger()}
 }
 
 func (s *paymentLinkService) Create(ctx context.Context, merchantID uuid.UUID, createdBy *uuid.UUID, req domain.CreatePaymentLinkRequest) (*domain.PaymentLink, error) {
@@ -182,12 +183,4 @@ func generatePublicID() (string, error) {
 		out[i] = hexdigits[int(b)%len(hexdigits)]
 	}
 	return "pl_" + string(out), nil
-}
-
-// strings_TrimRightSlash trims a single trailing slash so URL joins don't double.
-func strings_TrimRightSlash(s string) string {
-	if len(s) > 0 && s[len(s)-1] == '/' {
-		return s[:len(s)-1]
-	}
-	return s
 }

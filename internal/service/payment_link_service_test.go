@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/rs/zerolog"
 
 	"github.com/yourco/payment-gateway/internal/domain"
@@ -99,5 +98,3 @@ func TestGetPaymentLinkOtherMerchantIsNotFound(t *testing.T) {
 		t.Fatalf("owner Get failed: %v", err)
 	}
 }
-
-var _ = pgtype.UUID{} // keep pgtype import if unused above
