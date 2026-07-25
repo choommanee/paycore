@@ -88,6 +88,25 @@ type Payment struct {
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }
 
+type PaymentLink struct {
+	ID             pgtype.UUID        `json:"id"`
+	MerchantID     pgtype.UUID        `json:"merchant_id"`
+	PublicID       string             `json:"public_id"`
+	Title          string             `json:"title"`
+	Description    string             `json:"description"`
+	AmountMinor    int64              `json:"amount_minor"`
+	Currency       string             `json:"currency"`
+	AllowedMethods []string           `json:"allowed_methods"`
+	LinkType       string             `json:"link_type"`
+	Status         string             `json:"status"`
+	Reference      string             `json:"reference"`
+	ImageUrl       string             `json:"image_url"`
+	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
+	CreatedBy      pgtype.UUID        `json:"created_by"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Payout struct {
 	ID            pgtype.UUID        `json:"id"`
 	MerchantID    pgtype.UUID        `json:"merchant_id"`
