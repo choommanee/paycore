@@ -195,6 +195,10 @@ func main() {
 	h = h.WithAuth(authHandler)
 	sessionAuth := middleware.SessionAuth(sessions)
 
+	merchantAuth := middleware.MerchantAuth(sessions, merchantSvc)
+	linkSvc := service.NewPaymentLinkService(repo, cfg.PublicBaseURL, logger)
+	h = h.WithPaymentLinks(handler.NewPaymentLinkHandler(linkSvc, logger))
+
 	// Behind a trusted TLS-terminating upstream (Railway/Fly/LB) the socket peer
 	// is the platform's proxy — and its source IP rotates, which breaks per-IP
 	// rate limiting (each request looks like a new client) and pollutes audit
@@ -236,7 +240,7 @@ func main() {
 	if cfg.MetricsPublic {
 		publicMetrics = middleware.MetricsHandler(metricsSet)
 	}
-	router.Setup(app, h, auth, sessionAuth, adminAuth, rateLimit, signupLimit, publicMetrics, cfg.WebDir, cfg.SandboxMode)
+	router.Setup(app, h, auth, sessionAuth, merchantAuth, adminAuth, rateLimit, signupLimit, publicMetrics, cfg.WebDir, cfg.SandboxMode)
 
 	// Separate internal metrics listener (not the public money API).
 	var metricsApp *fiber.App
