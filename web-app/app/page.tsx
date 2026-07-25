@@ -28,6 +28,7 @@ export default async function DashboardHome() {
         <p className="text-paycore-muted text-sm">เข้าสู่ระบบในชื่อ</p>
         <p className="text-lg font-medium">{me.name || me.email}</p>
         <p className="text-paycore-muted text-xs mt-1">merchant: {me.merchant_id}</p>
+        <a href="/links" className="inline-block mt-4 text-paycore-primary hover:underline">จัดการ Payment Links →</a>
       </section>
     </main>
   );
