@@ -11,7 +11,9 @@ import (
 // applied to merchant-scoped route groups; health probes, the QR webhook and
 // merchant onboarding stay open. sessionAuth is the dashboard human-login
 // session middleware (pc_session cookie) gating GET /v1/auth/me; it has no
-// effect unless h.Auth is wired. adminAuth gates the /v1/admin operator console
+// effect unless h.Auth is wired. merchantAuth is the combined session-cookie-OR-
+// API-key middleware gating /v1/payment-links; it has no effect unless
+// h.PaymentLink is wired. adminAuth gates the /v1/admin operator console
 // (X-Admin-Key, constant-time compare). rateLimit is a per-merchant limiter
 // mounted on the money route groups only (nil disables it). metrics, when
 // non-nil, is mounted at /metrics on the public listener — pass nil to keep it
@@ -23,7 +25,7 @@ import (
 // payer-simulator endpoints (/v1/sandbox/...) — it MUST be false in production
 // so those routes are completely absent (404) and no one can mark payments paid
 // without a signed bank webhook; it also gates POST /v1/auth/dev-login.
-func Setup(app *fiber.App, h *handler.Handlers, auth, sessionAuth, adminAuth, rateLimit, signupLimit fiber.Handler, metrics fiber.Handler, webDir string, sandbox bool) {
+func Setup(app *fiber.App, h *handler.Handlers, auth, sessionAuth, merchantAuth, adminAuth, rateLimit, signupLimit fiber.Handler, metrics fiber.Handler, webDir string, sandbox bool) {
 	// Health / probes (no auth, never rate limited).
 	app.Get("/healthz", h.Health.Live)
 	app.Get("/readyz", h.Health.Ready)
@@ -65,6 +67,16 @@ func Setup(app *fiber.App, h *handler.Handlers, auth, sessionAuth, adminAuth, ra
 		if sandbox {
 			v1.Post("/auth/dev-login", h.Auth.DevLogin)
 		}
+	}
+
+	// Payment links (dashboard + API). merchantAuth accepts a session cookie OR
+	// an API key. Reads/updates are merchant-scoped in the service (IDOR-safe).
+	if h.PaymentLink != nil {
+		links := v1.Group("/payment-links", merchantAuth)
+		links.Post("/", h.PaymentLink.Create)
+		links.Get("/", h.PaymentLink.List)
+		links.Get("/:id", h.PaymentLink.Get)
+		links.Patch("/:id", h.PaymentLink.Disable)
 	}
 
 	// Payments require merchant API-key auth. The resolved merchant scopes every

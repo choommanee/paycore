@@ -192,6 +192,8 @@ func ErrorHandler(log zerolog.Logger) fiber.ErrorHandler {
 			return domain.Error(c, fiber.StatusNotFound, "PAYMENT_NOT_FOUND", err.Error())
 		case errors.Is(err, domain.ErrMerchantNotFound):
 			return domain.Error(c, fiber.StatusNotFound, "MERCHANT_NOT_FOUND", err.Error())
+		case errors.Is(err, domain.ErrPaymentLinkNotFound):
+			return domain.Error(c, fiber.StatusNotFound, "PAYMENT_LINK_NOT_FOUND", err.Error())
 		case errors.Is(err, domain.ErrDisputeNotFound):
 			return domain.Error(c, fiber.StatusNotFound, "DISPUTE_NOT_FOUND", err.Error())
 		case errors.Is(err, domain.ErrUnauthorized):

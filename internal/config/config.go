@@ -83,6 +83,10 @@ type Config struct {
 	// SessionTTLHours is the lifetime of the pc_session cookie. Default 168 (7d).
 	SessionTTLHours int `mapstructure:"SESSION_TTL_HOURS"`
 
+	// PublicBaseURL is the origin used to build shareable payment-link / checkout
+	// URLs (<base>/pay/<public_id>). Defaults to OAuthRedirectBase when empty.
+	PublicBaseURL string `mapstructure:"PUBLIC_BASE_URL"`
+
 	// KMS / HSM references used by the tokenization vault.
 	KMSKeyID       string `mapstructure:"KMS_KEY_ID"`
 	VaultNamespace string `mapstructure:"VAULT_NAMESPACE"`
@@ -150,6 +154,7 @@ var envKeys = []string{
 	"METRICS_ADDR", "METRICS_PUBLIC", "DATABASE_URL",
 	"JWT_SECRET", "IDEMPOTENCY_TTL_SECONDS", "KMS_KEY_ID", "VAULT_NAMESPACE",
 	"GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "OAUTH_REDIRECT_BASE", "SESSION_TTL_HOURS",
+	"PUBLIC_BASE_URL",
 	"ACQUIRER_BASE_URL", "ACQUIRER_API_KEY", "ADMIN_API_KEY", "WEB_DIR",
 	"QR_WEBHOOK_SECRET", "WEBHOOK_SIGNING_SECRET", "WEBHOOK_DEFAULT_URL",
 	"WEBHOOK_MAX_ATTEMPTS", "SETTLEMENT_FEE_BPS", "QR_PROVIDER_BASE_URL",
@@ -206,6 +211,14 @@ func Load() (*Config, error) {
 	// the local default (:8080) when PORT is unset.
 	if port := strings.TrimSpace(os.Getenv("PORT")); port != "" {
 		c.HTTPAddr = "0.0.0.0:" + strings.TrimPrefix(port, ":")
+	}
+
+	if strings.TrimSpace(c.PublicBaseURL) == "" {
+		if strings.TrimSpace(c.OAuthRedirectBase) != "" {
+			c.PublicBaseURL = c.OAuthRedirectBase
+		} else {
+			c.PublicBaseURL = "http://localhost:3000"
+		}
 	}
 
 	if err := c.validate(); err != nil {

@@ -18,4 +18,5 @@ var (
 	ErrMerchantNotFound    = errors.New("merchant not found")
 	ErrDisputeNotFound     = errors.New("dispute not found")
 	ErrForbidden           = errors.New("forbidden")
+	ErrPaymentLinkNotFound = errors.New("payment link not found")
 )

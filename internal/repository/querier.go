@@ -36,6 +36,11 @@ type Querier interface {
 	// sqlc generates type-safe Go from these queries. All parameters are bound
 	// ($1, $2, ...) so there is no SQL-injection surface.
 	CreatePayment(ctx context.Context, arg CreatePaymentParams) (Payment, error)
+	// internal/repository/queries/payment_link.sql
+	// Payment links CRUD. Reads/updates are ALWAYS scoped by merchant_id to prevent
+	// one merchant reading/altering another's link (IDOR); the public_id lookup is
+	// the only unscoped read and is used by the (Phase 3) public checkout page.
+	CreatePaymentLink(ctx context.Context, arg CreatePaymentLinkParams) (PaymentLink, error)
 	CreatePayout(ctx context.Context, arg CreatePayoutParams) (Payout, error)
 	// internal/repository/queries/qr.sql
 	// QR payment data access. QR is an async push model: mint on create, then the
@@ -58,6 +63,8 @@ type Querier interface {
 	// authenticated merchant, avoiding a cross-tenant existence oracle (returns
 	// ErrNoRows -> 404 when the id belongs to another merchant).
 	GetPaymentForMerchant(ctx context.Context, arg GetPaymentForMerchantParams) (Payment, error)
+	GetPaymentLink(ctx context.Context, arg GetPaymentLinkParams) (PaymentLink, error)
+	GetPaymentLinkByPublicID(ctx context.Context, publicID string) (PaymentLink, error)
 	// Correlates an inbound webhook back to the minted QR via the stable
 	// correlation_ref. Used for PromptPay, whose webhook echoes the reference we
 	// embedded in the EMVCo tag-62 payload at creation.
@@ -88,6 +95,7 @@ type Querier interface {
 	ListAuditLog(ctx context.Context, limit int32) ([]AuditLog, error)
 	ListDisputesByMerchant(ctx context.Context, arg ListDisputesByMerchantParams) ([]Dispute, error)
 	ListDisputesByPayment(ctx context.Context, paymentID pgtype.UUID) ([]Dispute, error)
+	ListPaymentLinksByMerchant(ctx context.Context, arg ListPaymentLinksByMerchantParams) ([]PaymentLink, error)
 	ListPaymentsByMerchant(ctx context.Context, arg ListPaymentsByMerchantParams) ([]Payment, error)
 	// Settlement / payout rows for a merchant, most recent first.
 	ListPayoutsByMerchant(ctx context.Context, arg ListPayoutsByMerchantParams) ([]Payout, error)
@@ -124,6 +132,7 @@ type Querier interface {
 	SetMerchantWebhook(ctx context.Context, arg SetMerchantWebhookParams) (Merchant, error)
 	TouchMerchantUserLogin(ctx context.Context, id pgtype.UUID) error
 	UpdateDisputeStatus(ctx context.Context, arg UpdateDisputeStatusParams) (Dispute, error)
+	UpdatePaymentLinkStatus(ctx context.Context, arg UpdatePaymentLinkStatusParams) (PaymentLink, error)
 	UpdatePaymentStatus(ctx context.Context, arg UpdatePaymentStatusParams) (Payment, error)
 	UpdateQRStatus(ctx context.Context, arg UpdateQRStatusParams) (QrPayment, error)
 	WriteAuditLog(ctx context.Context, arg WriteAuditLogParams) error

@@ -21,6 +21,10 @@ type Handlers struct {
 	// Auth serves dashboard human login (Google OIDC + session cookie). Attached
 	// via WithAuth in main; the router mounts the auth routes only when non-nil.
 	Auth *AuthHandler
+	// PaymentLink serves shareable payment-link CRUD. Attached via
+	// WithPaymentLinks in main; the router mounts the /payment-links routes only
+	// when non-nil.
+	PaymentLink *PaymentLinkHandler
 }
 
 // WithSandbox attaches the sandbox payer-simulator handler. Called from main
@@ -33,6 +37,12 @@ func (h *Handlers) WithSandbox(svc service.SandboxService, log zerolog.Logger) *
 // WithAuth attaches the dashboard auth handler (Google OIDC + session).
 func (h *Handlers) WithAuth(a *AuthHandler) *Handlers {
 	h.Auth = a
+	return h
+}
+
+// WithPaymentLinks attaches the payment-link handler.
+func (h *Handlers) WithPaymentLinks(p *PaymentLinkHandler) *Handlers {
+	h.PaymentLink = p
 	return h
 }
 
