@@ -199,6 +199,12 @@ func main() {
 	linkSvc := service.NewPaymentLinkService(repo, cfg.PublicBaseURL, logger)
 	h = h.WithPaymentLinks(handler.NewPaymentLinkHandler(linkSvc, logger))
 
+	// Public hosted checkout. The payment service (svc) satisfies Charger, the QR
+	// service satisfies QRIssuer, and the card vault satisfies Tokenizer. The card
+	// (raw PAN) path is gated on SANDBOX_MODE inside the service.
+	checkoutSvc := service.NewCheckoutService(repo, svc, qrSvc, vault, cfg.SandboxMode, logger)
+	h = h.WithCheckout(handler.NewCheckoutHandler(checkoutSvc, logger))
+
 	// Behind a trusted TLS-terminating upstream (Railway/Fly/LB) the socket peer
 	// is the platform's proxy — and its source IP rotates, which breaks per-IP
 	// rate limiting (each request looks like a new client) and pollutes audit
@@ -231,6 +237,9 @@ func main() {
 	rateLimit := middleware.RateLimiter(cfg.RateLimitPerSec)
 	// Dedicated IP-keyed limiter for the public self-service signup endpoint.
 	signupLimit := middleware.SignupRateLimiter(cfg.SignupRateLimitPerHour)
+	// Dedicated IP-keyed limiter for the public hosted-checkout session-creation
+	// endpoint.
+	checkoutLimit := middleware.CheckoutRateLimiter(cfg.CheckoutRateLimitPerMin)
 
 	// /metrics leaks business/volume telemetry, so it is NOT exposed on the public
 	// money API by default. It is bound on a separate internal listener when
@@ -240,7 +249,7 @@ func main() {
 	if cfg.MetricsPublic {
 		publicMetrics = middleware.MetricsHandler(metricsSet)
 	}
-	router.Setup(app, h, auth, sessionAuth, merchantAuth, adminAuth, rateLimit, signupLimit, publicMetrics, cfg.WebDir, cfg.SandboxMode)
+	router.Setup(app, h, auth, sessionAuth, merchantAuth, adminAuth, rateLimit, signupLimit, checkoutLimit, publicMetrics, cfg.WebDir, cfg.SandboxMode)
 
 	// Separate internal metrics listener (not the public money API).
 	var metricsApp *fiber.App

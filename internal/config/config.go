@@ -48,6 +48,11 @@ type Config struct {
 	// dedicated IP-keyed limiter to blunt abuse. Default 5.
 	SignupRateLimitPerHour int `mapstructure:"SIGNUP_RATE_LIMIT_PER_HOUR"`
 
+	// CheckoutRateLimitPerMin caps how many public hosted-checkout session
+	// creations (POST /v1/checkout/sessions) a single client IP may make per
+	// minute. The endpoint is public/unauthenticated. Default 30.
+	CheckoutRateLimitPerMin int `mapstructure:"CHECKOUT_RATE_LIMIT_PER_MIN"`
+
 	// MigrateOnBoot, when true, runs all pending up migrations (embedded, in
 	// process) against DATABASE_URL before the server starts serving. Off by
 	// default for local dev; set MIGRATE_ON_BOOT=true on a platform like Railway
@@ -150,6 +155,7 @@ var envKeys = []string{
 	"ENV", "HTTP_ADDR", "LOG_LEVEL",
 	"TLS_CERT_FILE", "TLS_KEY_FILE", "TLS_TERMINATED_UPSTREAM",
 	"CORS_ALLOW_ORIGINS", "RATE_LIMIT_PER_SEC", "SIGNUP_RATE_LIMIT_PER_HOUR",
+	"CHECKOUT_RATE_LIMIT_PER_MIN",
 	"MIGRATE_ON_BOOT", "DB_MAX_CONNS", "DB_MIN_CONNS",
 	"METRICS_ADDR", "METRICS_PUBLIC", "DATABASE_URL",
 	"JWT_SECRET", "IDEMPOTENCY_TTL_SECONDS", "KMS_KEY_ID", "VAULT_NAMESPACE",
@@ -172,6 +178,7 @@ func Load() (*Config, error) {
 	v.SetDefault("SETTLEMENT_FEE_BPS", 0)
 	v.SetDefault("RATE_LIMIT_PER_SEC", 600)
 	v.SetDefault("SIGNUP_RATE_LIMIT_PER_HOUR", 5)
+	v.SetDefault("CHECKOUT_RATE_LIMIT_PER_MIN", 30)
 	v.SetDefault("MIGRATE_ON_BOOT", false)
 	v.SetDefault("DB_MAX_CONNS", 50)
 	v.SetDefault("DB_MIN_CONNS", 10)

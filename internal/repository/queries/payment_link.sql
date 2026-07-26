@@ -27,3 +27,20 @@ UPDATE payment_links
 SET status = $3, updated_at = NOW()
 WHERE id = $1 AND merchant_id = $2
 RETURNING *;
+
+-- name: ConsumePaymentLinkIfActive :one
+-- Atomically flips an active link to 'paid'. Returns no row if the link is not
+-- active (already paid/disabled/expired) — the caller uses that to prevent
+-- double payment of a single_use link.
+UPDATE payment_links SET status = 'paid', updated_at = NOW()
+WHERE id = $1 AND merchant_id = $2 AND status = 'active'
+RETURNING *;
+
+-- name: ReleasePaymentLinkReservation :one
+-- Reverts a link reserved by an in-flight charge back to 'active', but ONLY if it
+-- is still 'paid' (the reserved state). If the status changed meanwhile (e.g. a
+-- concurrent Disable set it 'disabled'), this affects no row and that change is
+-- preserved — so releasing a failed charge can never silently undo a disable.
+UPDATE payment_links SET status = 'active', updated_at = NOW()
+WHERE id = $1 AND merchant_id = $2 AND status = 'paid'
+RETURNING *;

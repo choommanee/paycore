@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"errors"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -115,6 +116,25 @@ func SignupRateLimiter(perHour int) fiber.Handler {
 	})
 }
 
+// CheckoutRateLimiter limits public hosted-checkout session creation per client
+// IP (the endpoint is unauthenticated). It mirrors SignupRateLimiter but on a
+// per-minute window suited to interactive checkout. perMin <= 0 falls back to 30.
+func CheckoutRateLimiter(perMin int) fiber.Handler {
+	if perMin <= 0 {
+		perMin = 30
+	}
+	return limiter.New(limiter.Config{
+		Max:        perMin,
+		Expiration: time.Minute,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return "checkout:" + clientIP(c)
+		},
+		LimitReached: func(c *fiber.Ctx) error {
+			return domain.Error(c, fiber.StatusTooManyRequests, "RATE_LIMITED", "too many checkout attempts from this address; please try again shortly")
+		},
+	})
+}
+
 func requestID() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		id := c.Get("X-Request-ID")
@@ -133,6 +153,17 @@ func requestID() fiber.Handler {
 // dropped; sampling only thins the successful requests that would otherwise cap
 // throughput via serialized stdout I/O.
 const logSampleEvery = 20 // ~5%
+
+// checkoutTokenPathRe matches the opaque checkout session token embedded in the
+// URL path (the only bearer credential this API carries in a path rather than a
+// header/cookie). It is redacted before the path is logged so the token never
+// reaches stdout/log aggregation.
+var checkoutTokenPathRe = regexp.MustCompile(`(/checkout/sessions/)[^/]+`)
+
+// redactSecretPath removes path-embedded credentials before logging.
+func redactSecretPath(path string) string {
+	return checkoutTokenPathRe.ReplaceAllString(path, "${1}<redacted>")
+}
 
 // requestLogger logs method/path/status/latency. It deliberately never logs the
 // request body — bodies may contain cardholder-data-adjacent fields. On the hot
@@ -159,7 +190,7 @@ func requestLogger(log zerolog.Logger, prod bool) fiber.Handler {
 		ev.
 			Str("request_id", reqID).
 			Str("method", c.Method()).
-			Str("path", c.Path()).
+			Str("path", redactSecretPath(c.Path())).
 			Int("status", status).
 			Dur("latency", time.Since(start)).
 			Msg("request")
@@ -194,6 +225,12 @@ func ErrorHandler(log zerolog.Logger) fiber.ErrorHandler {
 			return domain.Error(c, fiber.StatusNotFound, "MERCHANT_NOT_FOUND", err.Error())
 		case errors.Is(err, domain.ErrPaymentLinkNotFound):
 			return domain.Error(c, fiber.StatusNotFound, "PAYMENT_LINK_NOT_FOUND", err.Error())
+		case errors.Is(err, domain.ErrCheckoutSessionNotFound):
+			return domain.Error(c, fiber.StatusNotFound, "CHECKOUT_SESSION_NOT_FOUND", err.Error())
+		case errors.Is(err, domain.ErrCheckoutSessionExpired):
+			return domain.Error(c, fiber.StatusGone, "CHECKOUT_SESSION_EXPIRED", err.Error())
+		case errors.Is(err, domain.ErrCheckoutMethodUnavailable):
+			return domain.Error(c, fiber.StatusUnprocessableEntity, "CHECKOUT_METHOD_UNAVAILABLE", err.Error())
 		case errors.Is(err, domain.ErrDisputeNotFound):
 			return domain.Error(c, fiber.StatusNotFound, "DISPUTE_NOT_FOUND", err.Error())
 		case errors.Is(err, domain.ErrUnauthorized):

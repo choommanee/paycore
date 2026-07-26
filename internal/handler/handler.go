@@ -25,6 +25,10 @@ type Handlers struct {
 	// WithPaymentLinks in main; the router mounts the /payment-links routes only
 	// when non-nil.
 	PaymentLink *PaymentLinkHandler
+	// Checkout serves the public hosted-checkout endpoints. Attached via
+	// WithCheckout in main; the router mounts the /checkout routes only when
+	// non-nil.
+	Checkout *CheckoutHandler
 }
 
 // WithSandbox attaches the sandbox payer-simulator handler. Called from main
@@ -43,6 +47,12 @@ func (h *Handlers) WithAuth(a *AuthHandler) *Handlers {
 // WithPaymentLinks attaches the payment-link handler.
 func (h *Handlers) WithPaymentLinks(p *PaymentLinkHandler) *Handlers {
 	h.PaymentLink = p
+	return h
+}
+
+// WithCheckout attaches the public hosted-checkout handler.
+func (h *Handlers) WithCheckout(cx *CheckoutHandler) *Handlers {
+	h.Checkout = cx
 	return h
 }
 

@@ -18,9 +18,18 @@ type Querier interface {
 	// within a time window. Only captured/partial_refunded/refunded rows have moved
 	// money and are eligible for payout.
 	AggregateCapturedForSettlement(ctx context.Context, arg AggregateCapturedForSettlementParams) ([]AggregateCapturedForSettlementRow, error)
+	// Atomically flips an active link to 'paid'. Returns no row if the link is not
+	// active (already paid/disabled/expired) — the caller uses that to prevent
+	// double payment of a single_use link.
+	ConsumePaymentLinkIfActive(ctx context.Context, arg ConsumePaymentLinkIfActiveParams) (PaymentLink, error)
 	// Chargeback count for a merchant over the same window, used to derive the
 	// chargeback ratio against total payment count.
 	CountDisputesByMerchant(ctx context.Context, arg CountDisputesByMerchantParams) (int64, error)
+	// internal/repository/queries/checkout_session.sql
+	// Hosted-checkout sessions. A session is ALWAYS resolved by its token hash (the
+	// token is the credential); the merchant scope comes from the resolved row, not
+	// from the caller. Updates are by primary key (already resolved from the hash).
+	CreateCheckoutSession(ctx context.Context, arg CreateCheckoutSessionParams) (CheckoutSession, error)
 	// internal/repository/queries/dispute.sql
 	// Chargeback / dispute data access. State machine transitions are enforced in
 	// the service layer; these queries persist the resulting rows. All parameters
@@ -50,6 +59,7 @@ type Querier interface {
 	CreateReconMismatch(ctx context.Context, arg CreateReconMismatchParams) error
 	CreateWebhookEvent(ctx context.Context, arg CreateWebhookEventParams) error
 	GetByIdempotencyKey(ctx context.Context, arg GetByIdempotencyKeyParams) (Payment, error)
+	GetCheckoutSessionByTokenHash(ctx context.Context, sessionTokenHash string) (CheckoutSession, error)
 	GetDispute(ctx context.Context, id pgtype.UUID) (Dispute, error)
 	GetMerchant(ctx context.Context, id pgtype.UUID) (Merchant, error)
 	GetMerchantByAPIKeyHash(ctx context.Context, apiKeyHash string) (Merchant, error)
@@ -122,6 +132,11 @@ type Querier interface {
 	// Platform-wide key risk indicators across every merchant. Volume is captured
 	// (net-of-refund) minor units. merchant_count is a cheap correlated count.
 	PlatformStats(ctx context.Context) (PlatformStatsRow, error)
+	// Reverts a link reserved by an in-flight charge back to 'active', but ONLY if it
+	// is still 'paid' (the reserved state). If the status changed meanwhile (e.g. a
+	// concurrent Disable set it 'disabled'), this affects no row and that change is
+	// preserved — so releasing a failed charge can never silently undo a disable.
+	ReleasePaymentLinkReservation(ctx context.Context, arg ReleasePaymentLinkReservationParams) (PaymentLink, error)
 	// Issues a new API key by replacing the stored hash. The previous hash no
 	// longer resolves, so the old key is immediately invalidated. The raw key is
 	// generated and returned by the service layer; only its hash is persisted here.
@@ -131,6 +146,7 @@ type Querier interface {
 	// returned once by the service layer.
 	SetMerchantWebhook(ctx context.Context, arg SetMerchantWebhookParams) (Merchant, error)
 	TouchMerchantUserLogin(ctx context.Context, id pgtype.UUID) error
+	UpdateCheckoutSession(ctx context.Context, arg UpdateCheckoutSessionParams) (CheckoutSession, error)
 	UpdateDisputeStatus(ctx context.Context, arg UpdateDisputeStatusParams) (Dispute, error)
 	UpdatePaymentLinkStatus(ctx context.Context, arg UpdatePaymentLinkStatusParams) (PaymentLink, error)
 	UpdatePaymentStatus(ctx context.Context, arg UpdatePaymentStatusParams) (Payment, error)
