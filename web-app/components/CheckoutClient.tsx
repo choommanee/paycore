@@ -3,6 +3,15 @@
 import { useEffect, useRef, useState } from "react";
 import { formatMoney } from "@/lib/format";
 
+declare global {
+  interface Window {
+    QRCode?: {
+      new (el: HTMLElement, opts: { text: string; width: number; height: number; correctLevel: number }): unknown;
+      CorrectLevel: { L: number; M: number; Q: number; H: number };
+    };
+  }
+}
+
 type CheckoutView = {
   id: string;
   status: string;
@@ -163,11 +172,119 @@ export default function CheckoutClient({ publicId }: { publicId: string }) {
   );
 }
 
-// Placeholder components implemented fully in Task 8; declared here so this file
-// compiles independently. Task 8 REPLACES these with the QR + polling versions.
-function PayPromptPayButton(_: { token: string; onPaid: (v: CheckoutView) => void; setErr: (s: string) => void }) {
-  return null;
+// waitForQRCode resolves once the vanilla qrcode.min.js global is available
+// (loaded via <Script strategy="afterInteractive">). Gives up after ~5s.
+function waitForQRCode(): Promise<NonNullable<Window["QRCode"]>> {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const tick = () => {
+      if (typeof window !== "undefined" && window.QRCode) return resolve(window.QRCode);
+      if (Date.now() - started > 5000) return reject(new Error("QR library not loaded"));
+      setTimeout(tick, 50);
+    };
+    tick();
+  });
 }
-function CheckoutStatusView(_: { token: string; initial: CheckoutView }) {
-  return null;
+
+// PayPromptPayButton initiates the PromptPay charge, then hands off to the status
+// view (which renders the QR + polls).
+function PayPromptPayButton({ token, onPaid, setErr }: { token: string; onPaid: (v: CheckoutView) => void; setErr: (s: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  async function start() {
+    setErr("");
+    setBusy(true);
+    const res = await fetch(`/api/checkout/sessions/${token}/pay`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ method: "promptpay" }),
+    });
+    const env = await res.json().catch(() => null);
+    setBusy(false);
+    if (!res.ok) {
+      setErr(env?.message ?? "สร้าง QR ไม่สำเร็จ");
+      return;
+    }
+    onPaid(env.data as CheckoutView); // status becomes requires_action -> status view takes over
+  }
+  return (
+    <button onClick={start} disabled={busy} className="w-full rounded-lg bg-paycore-primary hover:bg-paycore-primaryHover text-white font-medium px-4 py-2 disabled:opacity-60">
+      {busy ? "กำลังสร้าง QR…" : "สร้าง QR PromptPay"}
+    </button>
+  );
+}
+
+// CheckoutStatusView renders the QR (for PromptPay) and polls session status
+// until a terminal state, then shows success + optional return_url.
+function CheckoutStatusView({ token, initial }: { token: string; initial: CheckoutView }) {
+  const [view, setView] = useState<CheckoutView>(initial);
+  const qrBox = useRef<HTMLDivElement>(null);
+
+  // Render the QR whenever a payload is present and not yet paid.
+  useEffect(() => {
+    if (!view.qr_payload || view.status === "paid") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const QR = await waitForQRCode();
+        if (cancelled || !qrBox.current) return;
+        qrBox.current.innerHTML = "";
+        // Use the resolved global's own CorrectLevel.M rather than a hardcoded
+        // numeric literal: davidshimjs/qrcodejs defines the enum as
+        // { L:1, M:0, Q:3, H:2 }, so a literal "1" is actually level L, not M.
+        new QR(qrBox.current, { text: view.qr_payload!, width: 220, height: 220, correctLevel: QR.CorrectLevel.M });
+      } catch {
+        /* leave the payload text visible as a fallback */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [view.qr_payload, view.status]);
+
+  // Poll status until terminal.
+  useEffect(() => {
+    if (view.status === "paid" || view.status === "expired" || view.status === "failed") return;
+    const id = setInterval(async () => {
+      const res = await fetch(`/api/checkout/sessions/${token}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const env = await res.json();
+      setView(env.data as CheckoutView);
+    }, 3000);
+    return () => clearInterval(id);
+  }, [token, view.status]);
+
+  if (view.status === "paid") {
+    return (
+      <div className="max-w-md w-full rounded-xl2 bg-paycore-surface p-8 mt-10 text-center space-y-4">
+        <div className="text-4xl">✓</div>
+        <h1 className="text-xl font-semibold">ชำระเงินสำเร็จ</h1>
+        <p className="text-paycore-muted">{formatMoney(view.amount_minor, view.currency)}</p>
+        {view.return_url && (
+          <a href={view.return_url} className="inline-block rounded-lg bg-paycore-primary hover:bg-paycore-primaryHover text-white px-4 py-2">
+            กลับไปที่ร้านค้า
+          </a>
+        )}
+      </div>
+    );
+  }
+  if (view.status === "expired" || view.status === "failed") {
+    return (
+      <div className="max-w-md w-full rounded-xl2 bg-paycore-surface p-8 mt-10 text-center space-y-3">
+        <div className="text-4xl">⚠️</div>
+        <h1 className="text-lg font-semibold">
+          {view.status === "expired" ? "หมดเวลาชำระเงิน" : "ชำระเงินไม่สำเร็จ"}
+        </h1>
+        <p className="text-paycore-muted text-sm">โปรดลองอีกครั้ง</p>
+      </div>
+    );
+  }
+
+  // PromptPay awaiting: show QR + amount.
+  return (
+    <div className="max-w-md w-full rounded-xl2 bg-paycore-surface p-6 mt-10 text-center space-y-4">
+      <p className="text-paycore-muted text-sm">{view.merchant_name}</p>
+      <h1 className="text-lg font-semibold">สแกนเพื่อชำระด้วย PromptPay</h1>
+      <p className="text-2xl font-bold">{formatMoney(view.amount_minor, view.currency)}</p>
+      <div ref={qrBox} className="mx-auto bg-white p-3 rounded-lg inline-block" style={{ minHeight: 220, minWidth: 220 }} />
+      <p className="text-paycore-muted text-xs">รอการยืนยันการชำระเงิน…</p>
+    </div>
+  );
 }
