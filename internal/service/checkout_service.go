@@ -133,52 +133,62 @@ func (s *checkoutService) Get(ctx context.Context, token string) (*domain.Checko
 	if err != nil {
 		return nil, err
 	}
-	row, err = s.syncStatus(ctx, row)
+	row, qr, err := s.syncStatus(ctx, row)
 	if err != nil {
 		return nil, err
 	}
 	view := s.buildView(ctx, row, nil)
 	// Re-surface the PromptPay payload so a reloaded page can re-render the QR.
+	// qr is whatever syncStatus already fetched (nil if it fetched nothing, or if
+	// the session moved to a terminal state) — reused here so Get never polls the
+	// QR provider a second time for the same request.
 	if row.SelectedMethod == "promptpay" && row.QrPaymentID.Valid &&
-		row.Status == string(domain.CheckoutRequiresAction) && s.qr != nil {
-		if qr, gerr := s.qr.Get(ctx, pgUUIDToUUID(row.MerchantID), pgUUIDToUUID(row.QrPaymentID)); gerr == nil {
-			view.QRPayload = qr.QRPayload
-		}
+		row.Status == string(domain.CheckoutRequiresAction) && qr != nil {
+		view.QRPayload = qr.QRPayload
 	}
 	return view, nil
 }
 
 // syncStatus advances a non-terminal session based on live state. Terminal
-// states (paid/failed/expired) are returned unchanged.
-func (s *checkoutService) syncStatus(ctx context.Context, row repository.CheckoutSession) (repository.CheckoutSession, error) {
+// states (paid/failed/expired) are returned unchanged. It also returns the
+// *domain.QRPayment fetched from the provider, if any, so callers (Get) can
+// reuse it instead of polling the provider again; it is nil when no QR fetch
+// occurred (or when the session moved to a terminal state).
+func (s *checkoutService) syncStatus(ctx context.Context, row repository.CheckoutSession) (repository.CheckoutSession, *domain.QRPayment, error) {
 	status := domain.CheckoutStatus(row.Status)
 	if status == domain.CheckoutPaid || status == domain.CheckoutFailed || status == domain.CheckoutExpired {
-		return row, nil
+		return row, nil, nil
 	}
 	if row.ExpiresAt.Valid && time.Now().After(row.ExpiresAt.Time) {
-		return s.transition(ctx, row, domain.CheckoutExpired)
+		updated, err := s.transition(ctx, row, domain.CheckoutExpired)
+		return updated, nil, err
 	}
 	if row.SelectedMethod == "promptpay" && row.QrPaymentID.Valid &&
 		status == domain.CheckoutRequiresAction && s.qr != nil {
 		qr, err := s.qr.Get(ctx, pgUUIDToUUID(row.MerchantID), pgUUIDToUUID(row.QrPaymentID))
 		if err != nil {
-			return row, nil // transient read error: report no change, poll again
+			return row, nil, nil // transient read error: report no change, poll again
 		}
 		switch qr.Status {
 		case domain.QRPaid:
 			updated, terr := s.transition(ctx, row, domain.CheckoutPaid)
 			if terr != nil {
-				return row, terr
+				return row, nil, terr
 			}
 			s.markLinkPaid(ctx, updated)
-			return updated, nil
+			return updated, nil, nil
 		case domain.QRExpired:
-			return s.transition(ctx, row, domain.CheckoutExpired)
+			updated, err := s.transition(ctx, row, domain.CheckoutExpired)
+			return updated, nil, err
 		case domain.QRFailed:
-			return s.transition(ctx, row, domain.CheckoutFailed)
+			updated, err := s.transition(ctx, row, domain.CheckoutFailed)
+			return updated, nil, err
 		}
+		// Still awaiting payment: hand back the payload we already fetched so
+		// Get can re-surface it without a second poll.
+		return row, qr, nil
 	}
-	return row, nil
+	return row, nil, nil
 }
 
 // Pay initiates payment for an open session with the selected method. It is

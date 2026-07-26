@@ -146,6 +146,9 @@ func (f *fakeCharger) Create(ctx context.Context, idemKey string, req domain.Cre
 type fakeQR struct {
 	createFn func(ctx context.Context, req domain.CreateQRRequest) (*domain.QRPayment, error)
 	getFn    func(ctx context.Context, merchantID, id uuid.UUID) (*domain.QRPayment, error)
+
+	mu       sync.Mutex
+	getCalls int // counts Get invocations; used to assert on provider-poll counts
 }
 
 func (f *fakeQR) Create(ctx context.Context, req domain.CreateQRRequest) (*domain.QRPayment, error) {
@@ -156,10 +159,19 @@ func (f *fakeQR) Create(ctx context.Context, req domain.CreateQRRequest) (*domai
 }
 
 func (f *fakeQR) Get(ctx context.Context, merchantID, id uuid.UUID) (*domain.QRPayment, error) {
+	f.mu.Lock()
+	f.getCalls++
+	f.mu.Unlock()
 	if f.getFn != nil {
 		return f.getFn(ctx, merchantID, id)
 	}
 	return &domain.QRPayment{ID: id, Status: domain.QRAwaitingPayment, QRPayload: "EMVCO-PAYLOAD"}, nil
+}
+
+func (f *fakeQR) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.getCalls
 }
 
 type fakeVault struct {
@@ -488,6 +500,34 @@ func TestGetPromptPaySyncsToPaidAndClosesLink(t *testing.T) {
 	}
 	if len(repo.linkStatusSets) != 1 || repo.linkStatusSets[0] != "paid" {
 		t.Fatalf("link status = %v want [paid]", repo.linkStatusSets)
+	}
+}
+
+// TestGetPromptPayPollsProviderAtMostOnce guards against the double-poll
+// regression: for a still-requires_action promptpay session, Get must fetch
+// the QR from the provider at most once (syncStatus's fetch reused for the
+// re-surfaced payload), not twice.
+func TestGetPromptPayPollsProviderAtMostOnce(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	mkLink(repo, merchant, "pl_abc", 5000, []string{"promptpay"})
+	qr := &fakeQR{}
+	svc := newCheckoutSvc(repo, &fakeCharger{}, qr, &fakeVault{}, true)
+	tok := openSession(t, repo, svc)
+	if _, err := svc.Pay(context.Background(), tok, domain.CheckoutPayRequest{Method: "promptpay"}); err != nil {
+		t.Fatalf("Pay: %v", err)
+	}
+	before := qr.callCount()
+
+	v, err := svc.Get(context.Background(), tok)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if v.Status != string(domain.CheckoutRequiresAction) || v.QRPayload != "EMVCO-PAYLOAD" {
+		t.Fatalf("v = %q / %q, want requires_action / EMVCO-PAYLOAD", v.Status, v.QRPayload)
+	}
+	if got := qr.callCount() - before; got != 1 {
+		t.Fatalf("qr.Get called %d times during Get(), want at most 1", got)
 	}
 }
 
