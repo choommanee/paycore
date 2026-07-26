@@ -13,6 +13,7 @@ import (
 
 	"github.com/yourco/payment-gateway/internal/domain"
 	"github.com/yourco/payment-gateway/internal/middleware"
+	"github.com/yourco/payment-gateway/internal/pkg/money"
 	"github.com/yourco/payment-gateway/internal/repository"
 )
 
@@ -129,8 +130,205 @@ func (s *checkoutService) Get(ctx context.Context, token string) (*domain.Checko
 	return nil, domain.ErrNotImplemented
 }
 
+// Pay initiates payment for an open session with the selected method. It is
+// idempotent: a session that is no longer open returns its current view (a
+// double-submit is a no-op), and an expired session is swept to expired.
 func (s *checkoutService) Pay(ctx context.Context, token string, req domain.CheckoutPayRequest) (*domain.CheckoutSessionView, error) {
-	return nil, domain.ErrNotImplemented
+	row, err := s.loadByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if row.ExpiresAt.Valid && time.Now().After(row.ExpiresAt.Time) {
+		_, _ = s.transition(ctx, row, domain.CheckoutExpired)
+		return nil, domain.ErrCheckoutSessionExpired
+	}
+	// Only an open session can be paid; anything else returns its current view
+	// (idempotent double-submit).
+	if domain.CheckoutStatus(row.Status) != domain.CheckoutOpen {
+		return s.Get(ctx, token)
+	}
+	// The method must be one this link + this phase actually supports.
+	allowed := domain.DisplayMethods(s.linkAllowedMethods(ctx, row))
+	if !containsMethod(allowed, req.Method) {
+		return nil, domain.ErrCheckoutMethodUnavailable
+	}
+	switch req.Method {
+	case "promptpay":
+		return s.payPromptPay(ctx, row, req)
+	case "card":
+		return s.payCard(ctx, row, req)
+	default:
+		return nil, domain.ErrCheckoutMethodUnavailable
+	}
+}
+
+func (s *checkoutService) payPromptPay(ctx context.Context, row repository.CheckoutSession, req domain.CheckoutPayRequest) (*domain.CheckoutSessionView, error) {
+	if s.qr == nil {
+		return nil, domain.ErrCheckoutMethodUnavailable
+	}
+	amount, err := money.FromMinor(row.AmountMinor, row.Currency)
+	if err != nil {
+		return nil, domain.ErrInvalidRequest
+	}
+	qr, err := s.qr.Create(ctx, domain.CreateQRRequest{
+		MerchantID: pgUUIDToUUID(row.MerchantID),
+		Method:     domain.QRPromptPayDynamic,
+		Amount:     amount,
+		Currency:   row.Currency,
+	})
+	if err != nil {
+		return nil, err
+	}
+	updated, err := s.repo.UpdateCheckoutSession(ctx, repository.UpdateCheckoutSessionParams{
+		ID:             row.ID,
+		Status:         string(domain.CheckoutRequiresAction),
+		SelectedMethod: "promptpay",
+		PaymentID:      row.PaymentID,
+		QrPaymentID:    toPgUUID(qr.ID),
+		CustomerEmail:  strFallback(req.CustomerEmail, row.CustomerEmail),
+	})
+	if err != nil {
+		return nil, err
+	}
+	view := s.buildView(ctx, updated, nil)
+	view.QRPayload = qr.QRPayload
+	return view, nil
+}
+
+func (s *checkoutService) payCard(ctx context.Context, row repository.CheckoutSession, req domain.CheckoutPayRequest) (*domain.CheckoutSessionView, error) {
+	// Receiving a raw PAN is sandbox-only. In production, real hosted-fields
+	// tokenization is out of scope, so refuse rather than accept card data.
+	if !s.sandbox {
+		return nil, domain.ErrCheckoutMethodUnavailable
+	}
+	if req.Card == nil {
+		return nil, domain.ErrInvalidRequest
+	}
+	if s.vault == nil || s.charger == nil {
+		return nil, domain.ErrCheckoutMethodUnavailable
+	}
+	// Tokenize the PAN so the PaymentService receives a vault token (never a PAN).
+	tok, _, err := s.vault.Tokenize(ctx, req.Card.Number)
+	if err != nil {
+		return nil, domain.ErrInvalidRequest
+	}
+	amount, err := money.FromMinor(row.AmountMinor, row.Currency)
+	if err != nil {
+		return nil, domain.ErrInvalidRequest
+	}
+	sessionID := pgUUIDToUUID(row.ID)
+	p, err := s.charger.Create(ctx, "cs_"+sessionID.String(), domain.CreatePaymentRequest{
+		MerchantID:   pgUUIDToUUID(row.MerchantID),
+		Amount:       amount,
+		Currency:     row.Currency,
+		PaymentToken: tok,
+		Capture:      true,
+		ReturnURL:    row.ReturnUrl,
+	})
+	if err != nil {
+		// A decline / insufficient funds marks the session failed and surfaces the
+		// error (mapped to 402 by the error handler) so the page can show it.
+		_, _ = s.transition(ctx, row, domain.CheckoutFailed)
+		return nil, err
+	}
+	next := domain.CheckoutPaid
+	if p.Status == domain.StatusRequiresAction {
+		next = domain.CheckoutRequiresAction
+	}
+	updated, err := s.repo.UpdateCheckoutSession(ctx, repository.UpdateCheckoutSessionParams{
+		ID:             row.ID,
+		Status:         string(next),
+		SelectedMethod: "card",
+		PaymentID:      toPgUUID(p.ID),
+		QrPaymentID:    row.QrPaymentID,
+		CustomerEmail:  strFallback(req.CustomerEmail, row.CustomerEmail),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if next == domain.CheckoutPaid {
+		s.markLinkPaid(ctx, updated)
+	}
+	view := s.buildView(ctx, updated, nil)
+	view.NextActionURL = p.NextActionURL
+	return view, nil
+}
+
+// ---- shared helpers (also used by Get in Task 5) ---------------------------
+
+func (s *checkoutService) loadByToken(ctx context.Context, token string) (repository.CheckoutSession, error) {
+	if s.repo == nil {
+		return repository.CheckoutSession{}, domain.ErrCheckoutSessionNotFound
+	}
+	row, err := s.repo.GetCheckoutSessionByTokenHash(ctx, middleware.HashAPIKey(token))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return repository.CheckoutSession{}, domain.ErrCheckoutSessionNotFound
+		}
+		return repository.CheckoutSession{}, err
+	}
+	return row, nil
+}
+
+// transition updates only the status, preserving the row's other fields.
+func (s *checkoutService) transition(ctx context.Context, row repository.CheckoutSession, status domain.CheckoutStatus) (repository.CheckoutSession, error) {
+	return s.repo.UpdateCheckoutSession(ctx, repository.UpdateCheckoutSessionParams{
+		ID:             row.ID,
+		Status:         string(status),
+		SelectedMethod: row.SelectedMethod,
+		PaymentID:      row.PaymentID,
+		QrPaymentID:    row.QrPaymentID,
+		CustomerEmail:  row.CustomerEmail,
+	})
+}
+
+// markLinkPaid closes a single_use link once its session is paid. Best-effort:
+// a failure is logged, not fatal to the payment.
+func (s *checkoutService) markLinkPaid(ctx context.Context, row repository.CheckoutSession) {
+	if !row.PaymentLinkID.Valid {
+		return
+	}
+	link, err := s.repo.GetPaymentLink(ctx, repository.GetPaymentLinkParams{
+		ID: row.PaymentLinkID, MerchantID: row.MerchantID,
+	})
+	if err != nil || link.LinkType != "single_use" {
+		return
+	}
+	if _, err := s.repo.UpdatePaymentLinkStatus(ctx, repository.UpdatePaymentLinkStatusParams{
+		ID: row.PaymentLinkID, MerchantID: row.MerchantID, Status: "paid",
+	}); err != nil {
+		s.log.Warn().Err(err).Msg("mark link paid failed")
+	}
+}
+
+// linkAllowedMethods returns the session link's allowed methods (nil if none).
+func (s *checkoutService) linkAllowedMethods(ctx context.Context, row repository.CheckoutSession) []string {
+	if !row.PaymentLinkID.Valid {
+		return nil
+	}
+	link, err := s.repo.GetPaymentLink(ctx, repository.GetPaymentLinkParams{
+		ID: row.PaymentLinkID, MerchantID: row.MerchantID,
+	})
+	if err != nil {
+		return nil
+	}
+	return link.AllowedMethods
+}
+
+func containsMethod(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+func strFallback(v, fallback string) string {
+	if v != "" {
+		return v
+	}
+	return fallback
 }
 
 // buildView renders the public, secret-free projection. link may be passed in to

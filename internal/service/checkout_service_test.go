@@ -11,11 +11,19 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/rs/zerolog"
+	"github.com/shopspring/decimal"
 
 	"github.com/yourco/payment-gateway/internal/domain"
 	"github.com/yourco/payment-gateway/internal/middleware"
+	moneypkg "github.com/yourco/payment-gateway/internal/pkg/money"
 	"github.com/yourco/payment-gateway/internal/repository"
 )
+
+type decimalDecimal = decimal.Decimal
+
+func moneyFromMinor(minor int64, currency string) (decimal.Decimal, error) {
+	return moneypkg.FromMinor(minor, currency)
+}
 
 // ---- fakes (shared by Tasks 3–5) -------------------------------------------
 
@@ -255,3 +263,182 @@ func TestCreateFromLinkUnknownIs404(t *testing.T) {
 }
 
 var _ = time.Now // retained; time is used by later tasks' tests
+
+// ---- Task 4 tests -----------------------------------------------------------
+
+func openSession(t *testing.T, repo *fakeCheckoutRepo, svc CheckoutService) string {
+	t.Helper()
+	view, err := svc.CreateFromLink(context.Background(), "pl_abc")
+	if err != nil {
+		t.Fatalf("CreateFromLink: %v", err)
+	}
+	return view.Token
+}
+
+func TestPayPromptPayMintsQRAndRequiresAction(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	mkLink(repo, merchant, "pl_abc", 5000, []string{"card", "promptpay"})
+	qr := &fakeQR{createFn: func(_ context.Context, req domain.CreateQRRequest) (*domain.QRPayment, error) {
+		if req.Method != domain.QRPromptPayDynamic {
+			t.Fatalf("method = %v want promptpay_dynamic", req.Method)
+		}
+		if !req.Amount.Equal(decimalFromMinor(t, 5000, "THB")) {
+			t.Fatalf("amount not converted to major units: %s", req.Amount)
+		}
+		return &domain.QRPayment{ID: uuid.New(), Status: domain.QRAwaitingPayment, QRPayload: "PP-EMV"}, nil
+	}}
+	svc := newCheckoutSvc(repo, &fakeCharger{}, qr, &fakeVault{}, true)
+	tok := openSession(t, repo, svc)
+
+	view, err := svc.Pay(context.Background(), tok, domain.CheckoutPayRequest{Method: "promptpay"})
+	if err != nil {
+		t.Fatalf("Pay: %v", err)
+	}
+	if view.Status != string(domain.CheckoutRequiresAction) {
+		t.Fatalf("status = %q want requires_action", view.Status)
+	}
+	if view.QRPayload != "PP-EMV" {
+		t.Fatalf("qr_payload = %q want PP-EMV", view.QRPayload)
+	}
+	if view.SelectedMethod != "promptpay" {
+		t.Fatalf("selected_method = %q", view.SelectedMethod)
+	}
+}
+
+func TestPayCardCapturedMarksPaidAndClosesLink(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	mkLink(repo, merchant, "pl_abc", 5000, []string{"card", "promptpay"})
+	charger := &fakeCharger{createFn: func(_ context.Context, idemKey string, req domain.CreatePaymentRequest) (*domain.Payment, error) {
+		if !strings.HasPrefix(idemKey, "cs_") {
+			t.Fatalf("idem key = %q want cs_<session>", idemKey)
+		}
+		if !req.Capture {
+			t.Fatal("card charge must Capture=true")
+		}
+		if req.PaymentToken != "tokv1.fake" {
+			t.Fatalf("payment token = %q want vault token", req.PaymentToken)
+		}
+		return &domain.Payment{ID: uuid.New(), Status: domain.StatusCaptured}, nil
+	}}
+	svc := newCheckoutSvc(repo, charger, &fakeQR{}, &fakeVault{}, true)
+	tok := openSession(t, repo, svc)
+
+	view, err := svc.Pay(context.Background(), tok, domain.CheckoutPayRequest{
+		Method: "card",
+		Card:   &domain.CardInput{Number: "4111111111111111", ExpMonth: 12, ExpYear: 2030, CVV: "123"},
+	})
+	if err != nil {
+		t.Fatalf("Pay: %v", err)
+	}
+	if view.Status != string(domain.CheckoutPaid) {
+		t.Fatalf("status = %q want paid", view.Status)
+	}
+	// single_use link must be closed as paid.
+	if len(repo.linkStatusSets) != 1 || repo.linkStatusSets[0] != "paid" {
+		t.Fatalf("link status sets = %v want [paid]", repo.linkStatusSets)
+	}
+}
+
+func TestPayCardRequiresActionOn3DS(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	mkLink(repo, merchant, "pl_abc", 5000, nil)
+	charger := &fakeCharger{createFn: func(_ context.Context, _ string, _ domain.CreatePaymentRequest) (*domain.Payment, error) {
+		return &domain.Payment{ID: uuid.New(), Status: domain.StatusRequiresAction, NextActionURL: "https://acs/challenge"}, nil
+	}}
+	svc := newCheckoutSvc(repo, charger, &fakeQR{}, &fakeVault{}, true)
+	tok := openSession(t, repo, svc)
+
+	view, err := svc.Pay(context.Background(), tok, domain.CheckoutPayRequest{
+		Method: "card",
+		Card:   &domain.CardInput{Number: "4000000000003220", ExpMonth: 1, ExpYear: 2031, CVV: "999"},
+	})
+	if err != nil {
+		t.Fatalf("Pay: %v", err)
+	}
+	if view.Status != string(domain.CheckoutRequiresAction) {
+		t.Fatalf("status = %q want requires_action", view.Status)
+	}
+	if view.NextActionURL != "https://acs/challenge" {
+		t.Fatalf("next_action_url = %q", view.NextActionURL)
+	}
+	if len(repo.linkStatusSets) != 0 {
+		t.Fatal("link must NOT be marked paid on 3DS pending")
+	}
+}
+
+func TestPayCardDeclinedMarksFailedAndSurfacesError(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	mkLink(repo, merchant, "pl_abc", 5000, nil)
+	charger := &fakeCharger{createFn: func(_ context.Context, _ string, _ domain.CreatePaymentRequest) (*domain.Payment, error) {
+		return nil, domain.ErrCardDeclined
+	}}
+	svc := newCheckoutSvc(repo, charger, &fakeQR{}, &fakeVault{}, true)
+	tok := openSession(t, repo, svc)
+
+	_, err := svc.Pay(context.Background(), tok, domain.CheckoutPayRequest{
+		Method: "card",
+		Card:   &domain.CardInput{Number: "4000000000000002", ExpMonth: 1, ExpYear: 2031, CVV: "999"},
+	})
+	if err != domain.ErrCardDeclined {
+		t.Fatalf("err = %v want ErrCardDeclined", err)
+	}
+	row, _ := repo.GetCheckoutSessionByTokenHash(context.Background(), middleware.HashAPIKey(tok))
+	if row.Status != string(domain.CheckoutFailed) {
+		t.Fatalf("session status = %q want failed", row.Status)
+	}
+}
+
+func TestPayCardBlockedOutsideSandbox(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	mkLink(repo, merchant, "pl_abc", 5000, []string{"card"})
+	svc := newCheckoutSvc(repo, &fakeCharger{}, &fakeQR{}, &fakeVault{}, false) // sandbox OFF
+	tok := openSession(t, repo, svc)
+
+	_, err := svc.Pay(context.Background(), tok, domain.CheckoutPayRequest{
+		Method: "card",
+		Card:   &domain.CardInput{Number: "4111111111111111", ExpMonth: 12, ExpYear: 2030, CVV: "123"},
+	})
+	if err != domain.ErrCheckoutMethodUnavailable {
+		t.Fatalf("err = %v want ErrCheckoutMethodUnavailable (card is sandbox-only)", err)
+	}
+}
+
+func TestPayMethodNotAllowedByLink(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	mkLink(repo, merchant, "pl_abc", 5000, []string{"promptpay"}) // card NOT allowed
+	svc := newCheckoutSvc(repo, &fakeCharger{}, &fakeQR{}, &fakeVault{}, true)
+	tok := openSession(t, repo, svc)
+
+	_, err := svc.Pay(context.Background(), tok, domain.CheckoutPayRequest{
+		Method: "card",
+		Card:   &domain.CardInput{Number: "4111111111111111", ExpMonth: 12, ExpYear: 2030, CVV: "123"},
+	})
+	if err != domain.ErrCheckoutMethodUnavailable {
+		t.Fatalf("err = %v want ErrCheckoutMethodUnavailable", err)
+	}
+}
+
+func TestPayUnknownTokenIs404(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	svc := newCheckoutSvc(repo, &fakeCharger{}, &fakeQR{}, &fakeVault{}, true)
+	_, err := svc.Pay(context.Background(), "cs_nope", domain.CheckoutPayRequest{Method: "promptpay"})
+	if err != domain.ErrCheckoutSessionNotFound {
+		t.Fatalf("err = %v want ErrCheckoutSessionNotFound", err)
+	}
+}
+
+// decimalFromMinor is a test helper mirroring money.FromMinor for assertions.
+func decimalFromMinor(t *testing.T, minor int64, currency string) decimalDecimal {
+	t.Helper()
+	d, err := moneyFromMinor(minor, currency)
+	if err != nil {
+		t.Fatalf("FromMinor: %v", err)
+	}
+	return d
+}
