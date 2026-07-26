@@ -442,3 +442,80 @@ func decimalFromMinor(t *testing.T, minor int64, currency string) decimalDecimal
 	}
 	return d
 }
+
+// ---- Task 5 tests -----------------------------------------------------------
+
+func TestGetPromptPaySyncsToPaidAndClosesLink(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	mkLink(repo, merchant, "pl_abc", 5000, []string{"promptpay"})
+	// QR is awaiting at pay time, then reports paid on the next Get.
+	var calls int
+	qr := &fakeQR{
+		createFn: func(_ context.Context, _ domain.CreateQRRequest) (*domain.QRPayment, error) {
+			return &domain.QRPayment{ID: uuid.New(), Status: domain.QRAwaitingPayment, QRPayload: "PP-EMV"}, nil
+		},
+		getFn: func(_ context.Context, _, id uuid.UUID) (*domain.QRPayment, error) {
+			calls++
+			st := domain.QRAwaitingPayment
+			if calls >= 2 {
+				st = domain.QRPaid
+			}
+			return &domain.QRPayment{ID: id, Status: st, QRPayload: "PP-EMV"}, nil
+		},
+	}
+	svc := newCheckoutSvc(repo, &fakeCharger{}, qr, &fakeVault{}, true)
+	tok := openSession(t, repo, svc)
+	if _, err := svc.Pay(context.Background(), tok, domain.CheckoutPayRequest{Method: "promptpay"}); err != nil {
+		t.Fatalf("Pay: %v", err)
+	}
+
+	// First Get: QR still awaiting -> requires_action, payload re-surfaced.
+	v1, err := svc.Get(context.Background(), tok)
+	if err != nil {
+		t.Fatalf("Get1: %v", err)
+	}
+	if v1.Status != string(domain.CheckoutRequiresAction) || v1.QRPayload != "PP-EMV" {
+		t.Fatalf("v1 = %q / %q", v1.Status, v1.QRPayload)
+	}
+	// Second Get: QR paid -> session paid, link closed.
+	v2, err := svc.Get(context.Background(), tok)
+	if err != nil {
+		t.Fatalf("Get2: %v", err)
+	}
+	if v2.Status != string(domain.CheckoutPaid) {
+		t.Fatalf("v2 status = %q want paid", v2.Status)
+	}
+	if len(repo.linkStatusSets) != 1 || repo.linkStatusSets[0] != "paid" {
+		t.Fatalf("link status = %v want [paid]", repo.linkStatusSets)
+	}
+}
+
+func TestGetSweepsExpiredSession(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	mkLink(repo, merchant, "pl_abc", 5000, nil)
+	svc := newCheckoutSvc(repo, &fakeCharger{}, &fakeQR{}, &fakeVault{}, true)
+	tok := openSession(t, repo, svc)
+	// Force the stored session to be already expired.
+	row, _ := repo.GetCheckoutSessionByTokenHash(context.Background(), middleware.HashAPIKey(tok))
+	row.ExpiresAt = pgTimestamptz(time.Now().Add(-time.Minute))
+	repo.sessByHash[row.SessionTokenHash] = row
+	repo.sessByID[uuid.UUID(row.ID.Bytes)] = row
+
+	v, err := svc.Get(context.Background(), tok)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if v.Status != string(domain.CheckoutExpired) {
+		t.Fatalf("status = %q want expired", v.Status)
+	}
+}
+
+func TestGetUnknownTokenIs404(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	svc := newCheckoutSvc(repo, &fakeCharger{}, &fakeQR{}, &fakeVault{}, true)
+	if _, err := svc.Get(context.Background(), "cs_nope"); err != domain.ErrCheckoutSessionNotFound {
+		t.Fatalf("err = %v want ErrCheckoutSessionNotFound", err)
+	}
+}

@@ -125,9 +125,60 @@ func (s *checkoutService) CreateFromLink(ctx context.Context, publicID string) (
 	return view, nil
 }
 
-// Get and Pay are implemented in Tasks 4–5. Stubbed so the file compiles now.
+// Get returns the current session view. It first syncs live state: an expired
+// session is swept to expired; a PromptPay session reflects its QR payment's
+// confirmed/expired/failed state (and closes a single_use link on paid).
 func (s *checkoutService) Get(ctx context.Context, token string) (*domain.CheckoutSessionView, error) {
-	return nil, domain.ErrNotImplemented
+	row, err := s.loadByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	row, err = s.syncStatus(ctx, row)
+	if err != nil {
+		return nil, err
+	}
+	view := s.buildView(ctx, row, nil)
+	// Re-surface the PromptPay payload so a reloaded page can re-render the QR.
+	if row.SelectedMethod == "promptpay" && row.QrPaymentID.Valid &&
+		row.Status == string(domain.CheckoutRequiresAction) && s.qr != nil {
+		if qr, gerr := s.qr.Get(ctx, pgUUIDToUUID(row.MerchantID), pgUUIDToUUID(row.QrPaymentID)); gerr == nil {
+			view.QRPayload = qr.QRPayload
+		}
+	}
+	return view, nil
+}
+
+// syncStatus advances a non-terminal session based on live state. Terminal
+// states (paid/failed/expired) are returned unchanged.
+func (s *checkoutService) syncStatus(ctx context.Context, row repository.CheckoutSession) (repository.CheckoutSession, error) {
+	status := domain.CheckoutStatus(row.Status)
+	if status == domain.CheckoutPaid || status == domain.CheckoutFailed || status == domain.CheckoutExpired {
+		return row, nil
+	}
+	if row.ExpiresAt.Valid && time.Now().After(row.ExpiresAt.Time) {
+		return s.transition(ctx, row, domain.CheckoutExpired)
+	}
+	if row.SelectedMethod == "promptpay" && row.QrPaymentID.Valid &&
+		status == domain.CheckoutRequiresAction && s.qr != nil {
+		qr, err := s.qr.Get(ctx, pgUUIDToUUID(row.MerchantID), pgUUIDToUUID(row.QrPaymentID))
+		if err != nil {
+			return row, nil // transient read error: report no change, poll again
+		}
+		switch qr.Status {
+		case domain.QRPaid:
+			updated, terr := s.transition(ctx, row, domain.CheckoutPaid)
+			if terr != nil {
+				return row, terr
+			}
+			s.markLinkPaid(ctx, updated)
+			return updated, nil
+		case domain.QRExpired:
+			return s.transition(ctx, row, domain.CheckoutExpired)
+		case domain.QRFailed:
+			return s.transition(ctx, row, domain.CheckoutFailed)
+		}
+	}
+	return row, nil
 }
 
 // Pay initiates payment for an open session with the selected method. It is
