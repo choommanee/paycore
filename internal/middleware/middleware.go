@@ -194,6 +194,12 @@ func ErrorHandler(log zerolog.Logger) fiber.ErrorHandler {
 			return domain.Error(c, fiber.StatusNotFound, "MERCHANT_NOT_FOUND", err.Error())
 		case errors.Is(err, domain.ErrPaymentLinkNotFound):
 			return domain.Error(c, fiber.StatusNotFound, "PAYMENT_LINK_NOT_FOUND", err.Error())
+		case errors.Is(err, domain.ErrCheckoutSessionNotFound):
+			return domain.Error(c, fiber.StatusNotFound, "CHECKOUT_SESSION_NOT_FOUND", err.Error())
+		case errors.Is(err, domain.ErrCheckoutSessionExpired):
+			return domain.Error(c, fiber.StatusGone, "CHECKOUT_SESSION_EXPIRED", err.Error())
+		case errors.Is(err, domain.ErrCheckoutMethodUnavailable):
+			return domain.Error(c, fiber.StatusUnprocessableEntity, "CHECKOUT_METHOD_UNAVAILABLE", err.Error())
 		case errors.Is(err, domain.ErrDisputeNotFound):
 			return domain.Error(c, fiber.StatusNotFound, "DISPUTE_NOT_FOUND", err.Error())
 		case errors.Is(err, domain.ErrUnauthorized):
