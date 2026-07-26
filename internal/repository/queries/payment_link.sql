@@ -27,3 +27,11 @@ UPDATE payment_links
 SET status = $3, updated_at = NOW()
 WHERE id = $1 AND merchant_id = $2
 RETURNING *;
+
+-- name: ConsumePaymentLinkIfActive :one
+-- Atomically flips an active link to 'paid'. Returns no row if the link is not
+-- active (already paid/disabled/expired) — the caller uses that to prevent
+-- double payment of a single_use link.
+UPDATE payment_links SET status = 'paid', updated_at = NOW()
+WHERE id = $1 AND merchant_id = $2 AND status = 'active'
+RETURNING *;

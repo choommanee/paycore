@@ -18,6 +18,10 @@ type Querier interface {
 	// within a time window. Only captured/partial_refunded/refunded rows have moved
 	// money and are eligible for payout.
 	AggregateCapturedForSettlement(ctx context.Context, arg AggregateCapturedForSettlementParams) ([]AggregateCapturedForSettlementRow, error)
+	// Atomically flips an active link to 'paid'. Returns no row if the link is not
+	// active (already paid/disabled/expired) — the caller uses that to prevent
+	// double payment of a single_use link.
+	ConsumePaymentLinkIfActive(ctx context.Context, arg ConsumePaymentLinkIfActiveParams) (PaymentLink, error)
 	// Chargeback count for a merchant over the same window, used to derive the
 	// chargeback ratio against total payment count.
 	CountDisputesByMerchant(ctx context.Context, arg CountDisputesByMerchantParams) (int64, error)

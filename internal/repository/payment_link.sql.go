@@ -11,6 +11,44 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const consumePaymentLinkIfActive = `-- name: ConsumePaymentLinkIfActive :one
+UPDATE payment_links SET status = 'paid', updated_at = NOW()
+WHERE id = $1 AND merchant_id = $2 AND status = 'active'
+RETURNING id, merchant_id, public_id, title, description, amount_minor, currency, allowed_methods, link_type, status, reference, image_url, expires_at, created_by, created_at, updated_at
+`
+
+type ConsumePaymentLinkIfActiveParams struct {
+	ID         pgtype.UUID `json:"id"`
+	MerchantID pgtype.UUID `json:"merchant_id"`
+}
+
+// Atomically flips an active link to 'paid'. Returns no row if the link is not
+// active (already paid/disabled/expired) — the caller uses that to prevent
+// double payment of a single_use link.
+func (q *Queries) ConsumePaymentLinkIfActive(ctx context.Context, arg ConsumePaymentLinkIfActiveParams) (PaymentLink, error) {
+	row := q.db.QueryRow(ctx, consumePaymentLinkIfActive, arg.ID, arg.MerchantID)
+	var i PaymentLink
+	err := row.Scan(
+		&i.ID,
+		&i.MerchantID,
+		&i.PublicID,
+		&i.Title,
+		&i.Description,
+		&i.AmountMinor,
+		&i.Currency,
+		&i.AllowedMethods,
+		&i.LinkType,
+		&i.Status,
+		&i.Reference,
+		&i.ImageUrl,
+		&i.ExpiresAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createPaymentLink = `-- name: CreatePaymentLink :one
 
 INSERT INTO payment_links (

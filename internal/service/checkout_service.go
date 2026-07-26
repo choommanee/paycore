@@ -268,13 +268,51 @@ func (s *checkoutService) payCard(ctx context.Context, row repository.CheckoutSe
 	if s.vault == nil || s.charger == nil {
 		return nil, domain.ErrCheckoutMethodUnavailable
 	}
+
+	// single_use links must be reserved BEFORE we tokenize/charge: this is the
+	// only thing that prevents two concurrent sessions from a single_use link
+	// both charging the card. ConsumePaymentLinkIfActive atomically flips the
+	// link active -> paid; if it reports no row, another session already
+	// consumed it (or it's not active for another reason) and we must refuse
+	// without charging. Reusable links skip this — they may be paid repeatedly.
+	var reservedLink *repository.PaymentLink
+	if row.PaymentLinkID.Valid {
+		link, err := s.repo.GetPaymentLink(ctx, repository.GetPaymentLinkParams{
+			ID: row.PaymentLinkID, MerchantID: row.MerchantID,
+		})
+		// A real lookup error (not "link not found") fails closed: we cannot
+		// verify this isn't a single_use link, so refuse to charge rather than
+		// risk a double payment.
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+		if err == nil && link.LinkType == "single_use" {
+			consumed, cerr := s.repo.ConsumePaymentLinkIfActive(ctx, repository.ConsumePaymentLinkIfActiveParams{
+				ID: row.PaymentLinkID, MerchantID: row.MerchantID,
+			})
+			if cerr != nil {
+				if errors.Is(cerr, pgx.ErrNoRows) {
+					// Link already consumed by another session (or otherwise
+					// unavailable): do not charge. Fail the session and report
+					// the method as unavailable rather than double-charging.
+					_, _ = s.transition(ctx, row, domain.CheckoutFailed)
+					return nil, domain.ErrCheckoutMethodUnavailable
+				}
+				return nil, cerr
+			}
+			reservedLink = &consumed
+		}
+	}
+
 	// Tokenize the PAN so the PaymentService receives a vault token (never a PAN).
 	tok, _, err := s.vault.Tokenize(ctx, req.Card.Number)
 	if err != nil {
+		s.releaseLinkReservation(ctx, reservedLink, row)
 		return nil, domain.ErrInvalidRequest
 	}
 	amount, err := money.FromMinor(row.AmountMinor, row.Currency)
 	if err != nil {
+		s.releaseLinkReservation(ctx, reservedLink, row)
 		return nil, domain.ErrInvalidRequest
 	}
 	sessionID := pgUUIDToUUID(row.ID)
@@ -288,8 +326,11 @@ func (s *checkoutService) payCard(ctx context.Context, row repository.CheckoutSe
 	})
 	if err != nil {
 		// A decline / insufficient funds marks the session failed and surfaces the
-		// error (mapped to 402 by the error handler) so the page can show it.
+		// error (mapped to 402 by the error handler) so the page can show it. Since
+		// no money moved, release the reservation so the single_use link can be
+		// retried.
 		_, _ = s.transition(ctx, row, domain.CheckoutFailed)
+		s.releaseLinkReservation(ctx, reservedLink, row)
 		return nil, err
 	}
 	next := domain.CheckoutPaid
@@ -307,12 +348,29 @@ func (s *checkoutService) payCard(ctx context.Context, row repository.CheckoutSe
 	if err != nil {
 		return nil, err
 	}
+	// NOTE: the single_use link (if any) was already flipped to 'paid' by the
+	// reservation above; markLinkPaid is a no-op for it here (idempotent) and
+	// still handles the reusable-link case (which is a no-op by link_type).
 	if next == domain.CheckoutPaid {
 		s.markLinkPaid(ctx, updated)
 	}
 	view := s.buildView(ctx, updated, nil)
 	view.NextActionURL = p.NextActionURL
 	return view, nil
+}
+
+// releaseLinkReservation undoes a single_use link reservation made by
+// ConsumePaymentLinkIfActive when the charge did not go through (no money
+// moved), so the link can be retried. No-op if nothing was reserved.
+func (s *checkoutService) releaseLinkReservation(ctx context.Context, reserved *repository.PaymentLink, row repository.CheckoutSession) {
+	if reserved == nil {
+		return
+	}
+	if _, err := s.repo.UpdatePaymentLinkStatus(ctx, repository.UpdatePaymentLinkStatusParams{
+		ID: row.PaymentLinkID, MerchantID: row.MerchantID, Status: "active",
+	}); err != nil {
+		s.log.Warn().Err(err).Msg("release single_use link reservation failed")
+	}
 }
 
 // ---- shared helpers (also used by Get in Task 5) ---------------------------
@@ -343,8 +401,29 @@ func (s *checkoutService) transition(ctx context.Context, row repository.Checkou
 	})
 }
 
-// markLinkPaid closes a single_use link once its session is paid. Best-effort:
-// a failure is logged, not fatal to the payment.
+// markLinkPaid closes a single_use link once its session is paid. It is used
+// by both the card path (where the link was already reserved to 'paid' by
+// ConsumePaymentLinkIfActive before charging, so this call is a benign no-op)
+// and the PromptPay QRPaid path in syncStatus, where nothing reserved the link
+// up front and this call performs the actual atomic consume.
+//
+// It uses ConsumePaymentLinkIfActive (active -> paid, conditionally) rather
+// than the old non-conditional UpdatePaymentLinkStatus so that it is
+// idempotent and safe to call more than once, and so a link that is no longer
+// active (already consumed) is left alone instead of being stomped. Best
+// effort: pgx.ErrNoRows (already consumed / not single_use / not found) is a
+// benign no-op; other errors are logged, not fatal to the payment.
+//
+// KNOWN LIMITATION (accepted, not fixed here): PromptPay is async — a
+// customer can screenshot/share a single_use link's QR, or a merchant could
+// (incorrectly) let two customers scan two independently-minted QRs from the
+// same link before either settles at the bank. Both could complete payment at
+// the bank before either QRPaid webhook/poll arrives, since there is nothing
+// to reserve until a QR payment actually confirms. This method still ensures
+// only the FIRST QRPaid transition closes the link (subsequent ones are
+// no-ops here), so the link cannot be re-paid via checkout after the first
+// confirmation, but it cannot prevent two out-of-band bank transfers that
+// both raced ahead of the link being marked paid.
 func (s *checkoutService) markLinkPaid(ctx context.Context, row repository.CheckoutSession) {
 	if !row.PaymentLinkID.Valid {
 		return
@@ -355,9 +434,12 @@ func (s *checkoutService) markLinkPaid(ctx context.Context, row repository.Check
 	if err != nil || link.LinkType != "single_use" {
 		return
 	}
-	if _, err := s.repo.UpdatePaymentLinkStatus(ctx, repository.UpdatePaymentLinkStatusParams{
-		ID: row.PaymentLinkID, MerchantID: row.MerchantID, Status: "paid",
+	if _, err := s.repo.ConsumePaymentLinkIfActive(ctx, repository.ConsumePaymentLinkIfActiveParams{
+		ID: row.PaymentLinkID, MerchantID: row.MerchantID,
 	}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return // already consumed (or otherwise not active) — benign no-op
+		}
 		s.log.Warn().Err(err).Msg("mark link paid failed")
 	}
 }

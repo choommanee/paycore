@@ -132,15 +132,46 @@ func (f *fakeCheckoutRepo) UpdatePaymentLinkStatus(_ context.Context, a reposito
 	return l, nil
 }
 
+// ConsumePaymentLinkIfActive mirrors the real sqlc query: it atomically flips
+// an active link to 'paid' and returns pgx.ErrNoRows if the link is missing,
+// not owned by merchantID, or not currently 'active' (already consumed,
+// disabled, etc). A successful flip is recorded into linkStatusSets alongside
+// UpdatePaymentLinkStatus calls so existing "was the link closed" assertions
+// keep working regardless of which query performed the transition.
+func (f *fakeCheckoutRepo) ConsumePaymentLinkIfActive(_ context.Context, a repository.ConsumePaymentLinkIfActiveParams) (repository.PaymentLink, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	l, ok := f.linksByID[uuid.UUID(a.ID.Bytes)]
+	if !ok || uuid.UUID(l.MerchantID.Bytes) != uuid.UUID(a.MerchantID.Bytes) || l.Status != "active" {
+		return repository.PaymentLink{}, pgx.ErrNoRows
+	}
+	l.Status = "paid"
+	f.linksByID[uuid.UUID(a.ID.Bytes)] = l
+	f.linkStatusSets = append(f.linkStatusSets, "paid")
+	return l, nil
+}
+
 type fakeCharger struct {
 	createFn func(ctx context.Context, idemKey string, req domain.CreatePaymentRequest) (*domain.Payment, error)
+
+	mu          sync.Mutex
+	createCalls int // counts Create invocations; used to assert the charger fires exactly once
 }
 
 func (f *fakeCharger) Create(ctx context.Context, idemKey string, req domain.CreatePaymentRequest) (*domain.Payment, error) {
+	f.mu.Lock()
+	f.createCalls++
+	f.mu.Unlock()
 	if f.createFn != nil {
 		return f.createFn(ctx, idemKey, req)
 	}
 	return &domain.Payment{ID: uuid.New(), Status: domain.StatusCaptured}, nil
+}
+
+func (f *fakeCharger) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.createCalls
 }
 
 type fakeQR struct {
@@ -376,8 +407,16 @@ func TestPayCardRequiresActionOn3DS(t *testing.T) {
 	if view.NextActionURL != "https://acs/challenge" {
 		t.Fatalf("next_action_url = %q", view.NextActionURL)
 	}
-	if len(repo.linkStatusSets) != 0 {
-		t.Fatal("link must NOT be marked paid on 3DS pending")
+	// NOTE: with reserve-before-charge, a single_use link's reservation happens
+	// BEFORE the charge call returns, so it is already consumed ('paid') here
+	// even though the *session* is still requires_action pending 3DS. This is
+	// intentional: the reservation must not be released while a charge attempt
+	// is in flight / awaiting customer action (err == nil from the charger), or
+	// a concurrent second attempt could race in and double-charge exactly as
+	// this fix is meant to prevent. It is only released on an actual
+	// decline/error (see TestPayCardDeclineReleasesSingleUseLink).
+	if len(repo.linkStatusSets) != 1 || repo.linkStatusSets[0] != "paid" {
+		t.Fatalf("link status sets = %v want [paid] (reserved, held during 3DS pending)", repo.linkStatusSets)
 	}
 }
 
@@ -557,5 +596,149 @@ func TestGetUnknownTokenIs404(t *testing.T) {
 	svc := newCheckoutSvc(repo, &fakeCharger{}, &fakeQR{}, &fakeVault{}, true)
 	if _, err := svc.Get(context.Background(), "cs_nope"); err != domain.ErrCheckoutSessionNotFound {
 		t.Fatalf("err = %v want ErrCheckoutSessionNotFound", err)
+	}
+}
+
+// ---- single_use double-pay regression tests --------------------------------
+
+// TestPayCardSingleUseLinkCannotBePaidTwice is the core regression test for the
+// money-integrity bug: two checkout sessions opened against the same
+// single_use link must not both be able to charge a card. The first Pay
+// reserves the link (active -> paid) before charging and succeeds; the second
+// Pay's reservation attempt finds the link already 'paid' and must refuse
+// WITHOUT ever calling the charger.
+func TestPayCardSingleUseLinkCannotBePaidTwice(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	mkLink(repo, merchant, "pl_abc", 5000, []string{"card"})
+	charger := &fakeCharger{}
+	svc := newCheckoutSvc(repo, charger, &fakeQR{}, &fakeVault{}, true)
+
+	// Two sessions from the same (still-active) single_use link — e.g. two
+	// concurrent checkout tabs.
+	tok1 := openSession(t, repo, svc)
+	tok2 := openSession(t, repo, svc)
+
+	view1, err := svc.Pay(context.Background(), tok1, domain.CheckoutPayRequest{
+		Method: "card",
+		Card:   &domain.CardInput{Number: "4111111111111111", ExpMonth: 12, ExpYear: 2030, CVV: "123"},
+	})
+	if err != nil {
+		t.Fatalf("first Pay: %v", err)
+	}
+	if view1.Status != string(domain.CheckoutPaid) {
+		t.Fatalf("first session status = %q want paid", view1.Status)
+	}
+
+	_, err = svc.Pay(context.Background(), tok2, domain.CheckoutPayRequest{
+		Method: "card",
+		Card:   &domain.CardInput{Number: "4111111111111111", ExpMonth: 12, ExpYear: 2030, CVV: "123"},
+	})
+	if err != domain.ErrCheckoutMethodUnavailable {
+		t.Fatalf("second Pay err = %v want ErrCheckoutMethodUnavailable", err)
+	}
+	row2, _ := repo.GetCheckoutSessionByTokenHash(context.Background(), middleware.HashAPIKey(tok2))
+	if row2.Status != string(domain.CheckoutFailed) {
+		t.Fatalf("second session status = %q want failed", row2.Status)
+	}
+	// The critical assertion: the card processor must have been hit exactly
+	// once, not twice — this is what prevents the double charge.
+	if got := charger.callCount(); got != 1 {
+		t.Fatalf("charger.Create called %d times, want exactly 1 (no double charge)", got)
+	}
+}
+
+// TestPayCardDeclineReleasesSingleUseLink verifies that when a reserved
+// single_use link's charge is declined/errors (no money moved), the
+// reservation is released back to 'active' so the link remains usable for a
+// legitimate retry.
+func TestPayCardDeclineReleasesSingleUseLink(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	mkLink(repo, merchant, "pl_abc", 5000, []string{"card"})
+	firstCall := true
+	charger := &fakeCharger{createFn: func(_ context.Context, _ string, _ domain.CreatePaymentRequest) (*domain.Payment, error) {
+		if firstCall {
+			firstCall = false
+			return nil, domain.ErrCardDeclined
+		}
+		return &domain.Payment{ID: uuid.New(), Status: domain.StatusCaptured}, nil
+	}}
+	svc := newCheckoutSvc(repo, charger, &fakeQR{}, &fakeVault{}, true)
+	tok1 := openSession(t, repo, svc)
+
+	_, err := svc.Pay(context.Background(), tok1, domain.CheckoutPayRequest{
+		Method: "card",
+		Card:   &domain.CardInput{Number: "4000000000000002", ExpMonth: 1, ExpYear: 2031, CVV: "999"},
+	})
+	if err != domain.ErrCardDeclined {
+		t.Fatalf("err = %v want ErrCardDeclined", err)
+	}
+	row1, _ := repo.GetCheckoutSessionByTokenHash(context.Background(), middleware.HashAPIKey(tok1))
+	if row1.Status != string(domain.CheckoutFailed) {
+		t.Fatalf("session status = %q want failed", row1.Status)
+	}
+	// The link must have been released back to 'active', not left stuck 'paid'
+	// with no money having moved.
+	link, err := repo.GetPaymentLink(context.Background(), repository.GetPaymentLinkParams{
+		ID: row1.PaymentLinkID, MerchantID: row1.MerchantID,
+	})
+	if err != nil {
+		t.Fatalf("GetPaymentLink: %v", err)
+	}
+	if link.Status != "active" {
+		t.Fatalf("link status = %q want active (released after decline)", link.Status)
+	}
+	if len(repo.linkStatusSets) != 2 || repo.linkStatusSets[0] != "paid" || repo.linkStatusSets[1] != "active" {
+		t.Fatalf("link status sets = %v want [paid active] (reserve then release)", repo.linkStatusSets)
+	}
+
+	// A subsequent pay against a fresh session for the same (now-active again)
+	// link must succeed.
+	tok2 := openSession(t, repo, svc)
+	view2, err := svc.Pay(context.Background(), tok2, domain.CheckoutPayRequest{
+		Method: "card",
+		Card:   &domain.CardInput{Number: "4111111111111111", ExpMonth: 12, ExpYear: 2030, CVV: "123"},
+	})
+	if err != nil {
+		t.Fatalf("retry Pay: %v", err)
+	}
+	if view2.Status != string(domain.CheckoutPaid) {
+		t.Fatalf("retry status = %q want paid", view2.Status)
+	}
+}
+
+// TestPayCardReusableLinkChargesWithoutConsuming verifies reusable links skip
+// the reserve/consume dance entirely and can be paid repeatedly.
+func TestPayCardReusableLinkChargesWithoutConsuming(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	l := mkLink(repo, merchant, "pl_reuse", 5000, []string{"card"})
+	l.LinkType = "reusable"
+	repo.putLink(l)
+	charger := &fakeCharger{}
+	svc := newCheckoutSvc(repo, charger, &fakeQR{}, &fakeVault{}, true)
+
+	for i := 0; i < 2; i++ {
+		view, err := svc.CreateFromLink(context.Background(), "pl_reuse")
+		if err != nil {
+			t.Fatalf("CreateFromLink #%d: %v", i, err)
+		}
+		pview, err := svc.Pay(context.Background(), view.Token, domain.CheckoutPayRequest{
+			Method: "card",
+			Card:   &domain.CardInput{Number: "4111111111111111", ExpMonth: 12, ExpYear: 2030, CVV: "123"},
+		})
+		if err != nil {
+			t.Fatalf("Pay #%d: %v", i, err)
+		}
+		if pview.Status != string(domain.CheckoutPaid) {
+			t.Fatalf("Pay #%d status = %q want paid", i, pview.Status)
+		}
+	}
+	if got := charger.callCount(); got != 2 {
+		t.Fatalf("charger called %d times, want 2 (reusable link pays repeatedly)", got)
+	}
+	if len(repo.linkStatusSets) != 0 {
+		t.Fatalf("reusable link must never reserve/consume/close, link status sets = %v", repo.linkStatusSets)
 	}
 }
