@@ -115,6 +115,25 @@ func SignupRateLimiter(perHour int) fiber.Handler {
 	})
 }
 
+// CheckoutRateLimiter limits public hosted-checkout session creation per client
+// IP (the endpoint is unauthenticated). It mirrors SignupRateLimiter but on a
+// per-minute window suited to interactive checkout. perMin <= 0 falls back to 30.
+func CheckoutRateLimiter(perMin int) fiber.Handler {
+	if perMin <= 0 {
+		perMin = 30
+	}
+	return limiter.New(limiter.Config{
+		Max:        perMin,
+		Expiration: time.Minute,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return "checkout:" + clientIP(c)
+		},
+		LimitReached: func(c *fiber.Ctx) error {
+			return domain.Error(c, fiber.StatusTooManyRequests, "RATE_LIMITED", "too many checkout attempts from this address; please try again shortly")
+		},
+	})
+}
+
 func requestID() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		id := c.Get("X-Request-ID")

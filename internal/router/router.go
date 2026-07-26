@@ -25,7 +25,10 @@ import (
 // payer-simulator endpoints (/v1/sandbox/...) — it MUST be false in production
 // so those routes are completely absent (404) and no one can mark payments paid
 // without a signed bank webhook; it also gates POST /v1/auth/dev-login.
-func Setup(app *fiber.App, h *handler.Handlers, auth, sessionAuth, merchantAuth, adminAuth, rateLimit, signupLimit fiber.Handler, metrics fiber.Handler, webDir string, sandbox bool) {
+// checkoutLimit, when non-nil, is an IP-keyed limiter mounted ONLY on the public
+// POST /v1/checkout/sessions session-creation endpoint (nil disables it); the
+// other two checkout routes are unauthenticated but unlimited.
+func Setup(app *fiber.App, h *handler.Handlers, auth, sessionAuth, merchantAuth, adminAuth, rateLimit, signupLimit, checkoutLimit fiber.Handler, metrics fiber.Handler, webDir string, sandbox bool) {
 	// Health / probes (no auth, never rate limited).
 	app.Get("/healthz", h.Health.Live)
 	app.Get("/readyz", h.Health.Ready)
@@ -77,6 +80,20 @@ func Setup(app *fiber.App, h *handler.Handlers, auth, sessionAuth, merchantAuth,
 		links.Get("/", h.PaymentLink.List)
 		links.Get("/:id", h.PaymentLink.Get)
 		links.Patch("/:id", h.PaymentLink.Disable)
+	}
+
+	// Public hosted checkout (unauthenticated). The opaque session token in the
+	// URL path is the credential; the service scopes every op to that session.
+	// Session creation is IP-rate-limited (checkoutLimit) to blunt abuse.
+	if h.Checkout != nil {
+		checkout := v1.Group("/checkout")
+		if checkoutLimit != nil {
+			checkout.Post("/sessions", checkoutLimit, h.Checkout.Create)
+		} else {
+			checkout.Post("/sessions", h.Checkout.Create)
+		}
+		checkout.Get("/sessions/:token", h.Checkout.Get)
+		checkout.Post("/sessions/:token/pay", h.Checkout.Pay)
 	}
 
 	// Payments require merchant API-key auth. The resolved merchant scopes every
