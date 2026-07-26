@@ -18,6 +18,24 @@ type AuditLog struct {
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
+type CheckoutSession struct {
+	ID               pgtype.UUID        `json:"id"`
+	MerchantID       pgtype.UUID        `json:"merchant_id"`
+	PaymentLinkID    pgtype.UUID        `json:"payment_link_id"`
+	SessionTokenHash string             `json:"session_token_hash"`
+	AmountMinor      int64              `json:"amount_minor"`
+	Currency         string             `json:"currency"`
+	Status           string             `json:"status"`
+	SelectedMethod   string             `json:"selected_method"`
+	PaymentID        pgtype.UUID        `json:"payment_id"`
+	QrPaymentID      pgtype.UUID        `json:"qr_payment_id"`
+	CustomerEmail    string             `json:"customer_email"`
+	ReturnUrl        string             `json:"return_url"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Dispute struct {
 	ID          pgtype.UUID        `json:"id"`
 	PaymentID   pgtype.UUID        `json:"payment_id"`

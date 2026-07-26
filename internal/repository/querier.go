@@ -21,6 +21,11 @@ type Querier interface {
 	// Chargeback count for a merchant over the same window, used to derive the
 	// chargeback ratio against total payment count.
 	CountDisputesByMerchant(ctx context.Context, arg CountDisputesByMerchantParams) (int64, error)
+	// internal/repository/queries/checkout_session.sql
+	// Hosted-checkout sessions. A session is ALWAYS resolved by its token hash (the
+	// token is the credential); the merchant scope comes from the resolved row, not
+	// from the caller. Updates are by primary key (already resolved from the hash).
+	CreateCheckoutSession(ctx context.Context, arg CreateCheckoutSessionParams) (CheckoutSession, error)
 	// internal/repository/queries/dispute.sql
 	// Chargeback / dispute data access. State machine transitions are enforced in
 	// the service layer; these queries persist the resulting rows. All parameters
@@ -50,6 +55,7 @@ type Querier interface {
 	CreateReconMismatch(ctx context.Context, arg CreateReconMismatchParams) error
 	CreateWebhookEvent(ctx context.Context, arg CreateWebhookEventParams) error
 	GetByIdempotencyKey(ctx context.Context, arg GetByIdempotencyKeyParams) (Payment, error)
+	GetCheckoutSessionByTokenHash(ctx context.Context, sessionTokenHash string) (CheckoutSession, error)
 	GetDispute(ctx context.Context, id pgtype.UUID) (Dispute, error)
 	GetMerchant(ctx context.Context, id pgtype.UUID) (Merchant, error)
 	GetMerchantByAPIKeyHash(ctx context.Context, apiKeyHash string) (Merchant, error)
@@ -131,6 +137,7 @@ type Querier interface {
 	// returned once by the service layer.
 	SetMerchantWebhook(ctx context.Context, arg SetMerchantWebhookParams) (Merchant, error)
 	TouchMerchantUserLogin(ctx context.Context, id pgtype.UUID) error
+	UpdateCheckoutSession(ctx context.Context, arg UpdateCheckoutSessionParams) (CheckoutSession, error)
 	UpdateDisputeStatus(ctx context.Context, arg UpdateDisputeStatusParams) (Dispute, error)
 	UpdatePaymentLinkStatus(ctx context.Context, arg UpdatePaymentLinkStatusParams) (PaymentLink, error)
 	UpdatePaymentStatus(ctx context.Context, arg UpdatePaymentStatusParams) (Payment, error)
