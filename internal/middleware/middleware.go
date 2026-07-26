@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"errors"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -153,6 +154,17 @@ func requestID() fiber.Handler {
 // throughput via serialized stdout I/O.
 const logSampleEvery = 20 // ~5%
 
+// checkoutTokenPathRe matches the opaque checkout session token embedded in the
+// URL path (the only bearer credential this API carries in a path rather than a
+// header/cookie). It is redacted before the path is logged so the token never
+// reaches stdout/log aggregation.
+var checkoutTokenPathRe = regexp.MustCompile(`(/checkout/sessions/)[^/]+`)
+
+// redactSecretPath removes path-embedded credentials before logging.
+func redactSecretPath(path string) string {
+	return checkoutTokenPathRe.ReplaceAllString(path, "${1}<redacted>")
+}
+
 // requestLogger logs method/path/status/latency. It deliberately never logs the
 // request body — bodies may contain cardholder-data-adjacent fields. On the hot
 // path (prod) successful (2xx/3xx) requests are sampled; errors are always logged.
@@ -178,7 +190,7 @@ func requestLogger(log zerolog.Logger, prod bool) fiber.Handler {
 		ev.
 			Str("request_id", reqID).
 			Str("method", c.Method()).
-			Str("path", c.Path()).
+			Str("path", redactSecretPath(c.Path())).
 			Int("status", status).
 			Dur("latency", time.Since(start)).
 			Msg("request")
