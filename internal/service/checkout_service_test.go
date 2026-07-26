@@ -151,6 +151,24 @@ func (f *fakeCheckoutRepo) ConsumePaymentLinkIfActive(_ context.Context, a repos
 	return l, nil
 }
 
+// ReleasePaymentLinkReservation mirrors the real sqlc query: it reverts a link
+// to 'active' ONLY if it is currently 'paid' (the reserved state). If the status
+// is anything else (e.g. a concurrent Disable set it 'disabled'), it affects no
+// row and returns pgx.ErrNoRows, leaving that status untouched. A successful
+// release records "active" in linkStatusSets.
+func (f *fakeCheckoutRepo) ReleasePaymentLinkReservation(_ context.Context, a repository.ReleasePaymentLinkReservationParams) (repository.PaymentLink, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	l, ok := f.linksByID[uuid.UUID(a.ID.Bytes)]
+	if !ok || uuid.UUID(l.MerchantID.Bytes) != uuid.UUID(a.MerchantID.Bytes) || l.Status != "paid" {
+		return repository.PaymentLink{}, pgx.ErrNoRows
+	}
+	l.Status = "active"
+	f.linksByID[uuid.UUID(a.ID.Bytes)] = l
+	f.linkStatusSets = append(f.linkStatusSets, "active")
+	return l, nil
+}
+
 type fakeCharger struct {
 	createFn func(ctx context.Context, idemKey string, req domain.CreatePaymentRequest) (*domain.Payment, error)
 
@@ -740,5 +758,69 @@ func TestPayCardReusableLinkChargesWithoutConsuming(t *testing.T) {
 	}
 	if len(repo.linkStatusSets) != 0 {
 		t.Fatalf("reusable link must never reserve/consume/close, link status sets = %v", repo.linkStatusSets)
+	}
+}
+
+// TestReleaseDoesNotReviveDisabledLink verifies the conditional release: if a
+// reserved single_use link is disabled by the merchant mid-charge and the charge
+// then declines, releasing the reservation must NOT flip the link back to
+// 'active' (which would silently undo the disable). The release is a compare-and-
+// swap that only reverts a link still in the reserved 'paid' state.
+func TestReleaseDoesNotReviveDisabledLink(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	link := mkLink(repo, merchant, "pl_abc", 5000, []string{"card"})
+	// Mid-charge, simulate a concurrent merchant Disable flipping the (reserved,
+	// now 'paid') link to 'disabled', then decline the charge.
+	charger := &fakeCharger{createFn: func(_ context.Context, _ string, _ domain.CreatePaymentRequest) (*domain.Payment, error) {
+		_, _ = repo.UpdatePaymentLinkStatus(context.Background(), repository.UpdatePaymentLinkStatusParams{
+			ID: link.ID, MerchantID: link.MerchantID, Status: "disabled",
+		})
+		return nil, domain.ErrCardDeclined
+	}}
+	svc := newCheckoutSvc(repo, charger, &fakeQR{}, &fakeVault{}, true)
+	tok := openSession(t, repo, svc)
+
+	_, err := svc.Pay(context.Background(), tok, domain.CheckoutPayRequest{
+		Method: "card",
+		Card:   &domain.CardInput{Number: "4000000000000002", ExpMonth: 1, ExpYear: 2031, CVV: "999"},
+	})
+	if err != domain.ErrCardDeclined {
+		t.Fatalf("err = %v want ErrCardDeclined", err)
+	}
+	got, err := repo.GetPaymentLink(context.Background(), repository.GetPaymentLinkParams{ID: link.ID, MerchantID: link.MerchantID})
+	if err != nil {
+		t.Fatalf("GetPaymentLink: %v", err)
+	}
+	if got.Status != "disabled" {
+		t.Fatalf("link status = %q want disabled (release must NOT revive a link disabled mid-flight)", got.Status)
+	}
+}
+
+// TestPayCardFailsClosedWhenLinkMissing verifies that if a session references a
+// payment link that can no longer be loaded, payCard fails closed (returns an
+// error, charges nothing) rather than proceeding to charge without the reservation
+// gate — a defense-in-depth guard against ever double-charging an unverifiable link.
+func TestPayCardFailsClosedWhenLinkMissing(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	link := mkLink(repo, merchant, "pl_abc", 5000, []string{"card"})
+	charger := &fakeCharger{}
+	svc := newCheckoutSvc(repo, charger, &fakeQR{}, &fakeVault{}, true)
+	tok := openSession(t, repo, svc)
+	// Simulate the link becoming unloadable after the session was created; the
+	// session still references it, so payment must refuse rather than charge.
+	repo.mu.Lock()
+	delete(repo.linksByID, uuid.UUID(link.ID.Bytes))
+	repo.mu.Unlock()
+
+	if _, err := svc.Pay(context.Background(), tok, domain.CheckoutPayRequest{
+		Method: "card",
+		Card:   &domain.CardInput{Number: "4111111111111111", ExpMonth: 12, ExpYear: 2030, CVV: "123"},
+	}); err == nil {
+		t.Fatal("expected an error when the referenced link cannot be loaded (fail closed)")
+	}
+	if got := charger.callCount(); got != 0 {
+		t.Fatalf("charger called %d times, want 0 (must not charge when link is unverifiable)", got)
 	}
 }

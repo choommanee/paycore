@@ -132,6 +132,11 @@ type Querier interface {
 	// Platform-wide key risk indicators across every merchant. Volume is captured
 	// (net-of-refund) minor units. merchant_count is a cheap correlated count.
 	PlatformStats(ctx context.Context) (PlatformStatsRow, error)
+	// Reverts a link reserved by an in-flight charge back to 'active', but ONLY if it
+	// is still 'paid' (the reserved state). If the status changed meanwhile (e.g. a
+	// concurrent Disable set it 'disabled'), this affects no row and that change is
+	// preserved — so releasing a failed charge can never silently undo a disable.
+	ReleasePaymentLinkReservation(ctx context.Context, arg ReleasePaymentLinkReservationParams) (PaymentLink, error)
 	// Issues a new API key by replacing the stored hash. The previous hash no
 	// longer resolves, so the old key is immediately invalidated. The raw key is
 	// generated and returned by the service layer; only its hash is persisted here.

@@ -280,13 +280,14 @@ func (s *checkoutService) payCard(ctx context.Context, row repository.CheckoutSe
 		link, err := s.repo.GetPaymentLink(ctx, repository.GetPaymentLinkParams{
 			ID: row.PaymentLinkID, MerchantID: row.MerchantID,
 		})
-		// A real lookup error (not "link not found") fails closed: we cannot
-		// verify this isn't a single_use link, so refuse to charge rather than
-		// risk a double payment.
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		// Fail closed on ANY load error (including ErrNoRows): a session that
+		// references a link must be able to load it to know whether it is
+		// single_use and needs reservation. If we cannot verify it, refuse to
+		// charge rather than risk a double payment against an unverifiable link.
+		if err != nil {
 			return nil, err
 		}
-		if err == nil && link.LinkType == "single_use" {
+		if link.LinkType == "single_use" {
 			consumed, cerr := s.repo.ConsumePaymentLinkIfActive(ctx, repository.ConsumePaymentLinkIfActiveParams{
 				ID: row.PaymentLinkID, MerchantID: row.MerchantID,
 			})
@@ -366,9 +367,12 @@ func (s *checkoutService) releaseLinkReservation(ctx context.Context, reserved *
 	if reserved == nil {
 		return
 	}
-	if _, err := s.repo.UpdatePaymentLinkStatus(ctx, repository.UpdatePaymentLinkStatusParams{
-		ID: row.PaymentLinkID, MerchantID: row.MerchantID, Status: "active",
-	}); err != nil {
+	// Conditional release: only revert to 'active' if the link is still 'paid'
+	// (the state we reserved it in). pgx.ErrNoRows means the status changed under
+	// us (e.g. a concurrent Disable) — leave it as-is rather than reviving it.
+	if _, err := s.repo.ReleasePaymentLinkReservation(ctx, repository.ReleasePaymentLinkReservationParams{
+		ID: row.PaymentLinkID, MerchantID: row.MerchantID,
+	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		s.log.Warn().Err(err).Msg("release single_use link reservation failed")
 	}
 }

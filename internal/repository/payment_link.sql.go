@@ -229,6 +229,45 @@ func (q *Queries) ListPaymentLinksByMerchant(ctx context.Context, arg ListPaymen
 	return items, nil
 }
 
+const releasePaymentLinkReservation = `-- name: ReleasePaymentLinkReservation :one
+UPDATE payment_links SET status = 'active', updated_at = NOW()
+WHERE id = $1 AND merchant_id = $2 AND status = 'paid'
+RETURNING id, merchant_id, public_id, title, description, amount_minor, currency, allowed_methods, link_type, status, reference, image_url, expires_at, created_by, created_at, updated_at
+`
+
+type ReleasePaymentLinkReservationParams struct {
+	ID         pgtype.UUID `json:"id"`
+	MerchantID pgtype.UUID `json:"merchant_id"`
+}
+
+// Reverts a link reserved by an in-flight charge back to 'active', but ONLY if it
+// is still 'paid' (the reserved state). If the status changed meanwhile (e.g. a
+// concurrent Disable set it 'disabled'), this affects no row and that change is
+// preserved — so releasing a failed charge can never silently undo a disable.
+func (q *Queries) ReleasePaymentLinkReservation(ctx context.Context, arg ReleasePaymentLinkReservationParams) (PaymentLink, error) {
+	row := q.db.QueryRow(ctx, releasePaymentLinkReservation, arg.ID, arg.MerchantID)
+	var i PaymentLink
+	err := row.Scan(
+		&i.ID,
+		&i.MerchantID,
+		&i.PublicID,
+		&i.Title,
+		&i.Description,
+		&i.AmountMinor,
+		&i.Currency,
+		&i.AllowedMethods,
+		&i.LinkType,
+		&i.Status,
+		&i.Reference,
+		&i.ImageUrl,
+		&i.ExpiresAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updatePaymentLinkStatus = `-- name: UpdatePaymentLinkStatus :one
 UPDATE payment_links
 SET status = $3, updated_at = NOW()
