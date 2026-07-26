@@ -1,0 +1,257 @@
+package service
+
+import (
+	"context"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/rs/zerolog"
+
+	"github.com/yourco/payment-gateway/internal/domain"
+	"github.com/yourco/payment-gateway/internal/middleware"
+	"github.com/yourco/payment-gateway/internal/repository"
+)
+
+// ---- fakes (shared by Tasks 3–5) -------------------------------------------
+
+type fakeCheckoutRepo struct {
+	repository.Querier
+	mu             sync.Mutex
+	linksByPublic  map[string]repository.PaymentLink
+	linksByID      map[uuid.UUID]repository.PaymentLink
+	sessByHash     map[string]repository.CheckoutSession
+	sessByID       map[uuid.UUID]repository.CheckoutSession
+	merchantNames  map[uuid.UUID]string
+	linkStatusSets []string // records UpdatePaymentLinkStatus calls
+}
+
+func newFakeCheckoutRepo() *fakeCheckoutRepo {
+	return &fakeCheckoutRepo{
+		linksByPublic: map[string]repository.PaymentLink{},
+		linksByID:     map[uuid.UUID]repository.PaymentLink{},
+		sessByHash:    map[string]repository.CheckoutSession{},
+		sessByID:      map[uuid.UUID]repository.CheckoutSession{},
+		merchantNames: map[uuid.UUID]string{},
+	}
+}
+
+func (f *fakeCheckoutRepo) putLink(l repository.PaymentLink) {
+	f.linksByPublic[l.PublicID] = l
+	f.linksByID[uuid.UUID(l.ID.Bytes)] = l
+}
+
+func (f *fakeCheckoutRepo) GetPaymentLinkByPublicID(_ context.Context, publicID string) (repository.PaymentLink, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	l, ok := f.linksByPublic[publicID]
+	if !ok {
+		return repository.PaymentLink{}, pgx.ErrNoRows
+	}
+	return l, nil
+}
+
+func (f *fakeCheckoutRepo) GetPaymentLink(_ context.Context, a repository.GetPaymentLinkParams) (repository.PaymentLink, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	l, ok := f.linksByID[uuid.UUID(a.ID.Bytes)]
+	if !ok || uuid.UUID(l.MerchantID.Bytes) != uuid.UUID(a.MerchantID.Bytes) {
+		return repository.PaymentLink{}, pgx.ErrNoRows
+	}
+	return l, nil
+}
+
+func (f *fakeCheckoutRepo) GetMerchant(_ context.Context, id pgtype.UUID) (repository.Merchant, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	name, ok := f.merchantNames[uuid.UUID(id.Bytes)]
+	if !ok {
+		return repository.Merchant{}, pgx.ErrNoRows
+	}
+	return repository.Merchant{ID: id, Name: name, Status: "active"}, nil
+}
+
+func (f *fakeCheckoutRepo) CreateCheckoutSession(_ context.Context, a repository.CreateCheckoutSessionParams) (repository.CheckoutSession, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cs := repository.CheckoutSession{
+		ID: a.ID, MerchantID: a.MerchantID, PaymentLinkID: a.PaymentLinkID,
+		SessionTokenHash: a.SessionTokenHash, AmountMinor: a.AmountMinor, Currency: a.Currency,
+		Status: a.Status, SelectedMethod: a.SelectedMethod, PaymentID: a.PaymentID,
+		QrPaymentID: a.QrPaymentID, CustomerEmail: a.CustomerEmail, ReturnUrl: a.ReturnUrl,
+		ExpiresAt: a.ExpiresAt,
+	}
+	f.sessByHash[a.SessionTokenHash] = cs
+	f.sessByID[uuid.UUID(a.ID.Bytes)] = cs
+	return cs, nil
+}
+
+func (f *fakeCheckoutRepo) GetCheckoutSessionByTokenHash(_ context.Context, hash string) (repository.CheckoutSession, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cs, ok := f.sessByHash[hash]
+	if !ok {
+		return repository.CheckoutSession{}, pgx.ErrNoRows
+	}
+	return cs, nil
+}
+
+func (f *fakeCheckoutRepo) UpdateCheckoutSession(_ context.Context, a repository.UpdateCheckoutSessionParams) (repository.CheckoutSession, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	cs := f.sessByID[uuid.UUID(a.ID.Bytes)]
+	cs.Status = a.Status
+	cs.SelectedMethod = a.SelectedMethod
+	cs.PaymentID = a.PaymentID
+	cs.QrPaymentID = a.QrPaymentID
+	cs.CustomerEmail = a.CustomerEmail
+	f.sessByID[uuid.UUID(a.ID.Bytes)] = cs
+	f.sessByHash[cs.SessionTokenHash] = cs
+	return cs, nil
+}
+
+func (f *fakeCheckoutRepo) UpdatePaymentLinkStatus(_ context.Context, a repository.UpdatePaymentLinkStatusParams) (repository.PaymentLink, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.linkStatusSets = append(f.linkStatusSets, a.Status)
+	l := f.linksByID[uuid.UUID(a.ID.Bytes)]
+	l.Status = a.Status
+	f.linksByID[uuid.UUID(a.ID.Bytes)] = l
+	return l, nil
+}
+
+type fakeCharger struct {
+	createFn func(ctx context.Context, idemKey string, req domain.CreatePaymentRequest) (*domain.Payment, error)
+}
+
+func (f *fakeCharger) Create(ctx context.Context, idemKey string, req domain.CreatePaymentRequest) (*domain.Payment, error) {
+	if f.createFn != nil {
+		return f.createFn(ctx, idemKey, req)
+	}
+	return &domain.Payment{ID: uuid.New(), Status: domain.StatusCaptured}, nil
+}
+
+type fakeQR struct {
+	createFn func(ctx context.Context, req domain.CreateQRRequest) (*domain.QRPayment, error)
+	getFn    func(ctx context.Context, merchantID, id uuid.UUID) (*domain.QRPayment, error)
+}
+
+func (f *fakeQR) Create(ctx context.Context, req domain.CreateQRRequest) (*domain.QRPayment, error) {
+	if f.createFn != nil {
+		return f.createFn(ctx, req)
+	}
+	return &domain.QRPayment{ID: uuid.New(), Status: domain.QRAwaitingPayment, QRPayload: "EMVCO-PAYLOAD"}, nil
+}
+
+func (f *fakeQR) Get(ctx context.Context, merchantID, id uuid.UUID) (*domain.QRPayment, error) {
+	if f.getFn != nil {
+		return f.getFn(ctx, merchantID, id)
+	}
+	return &domain.QRPayment{ID: id, Status: domain.QRAwaitingPayment, QRPayload: "EMVCO-PAYLOAD"}, nil
+}
+
+type fakeVault struct {
+	tokenizeFn func(ctx context.Context, pan string) (string, string, error)
+}
+
+func (f *fakeVault) Tokenize(ctx context.Context, pan string) (string, string, error) {
+	if f.tokenizeFn != nil {
+		return f.tokenizeFn(ctx, pan)
+	}
+	if len(pan) < 4 {
+		return "", "", pgx.ErrNoRows
+	}
+	return "tokv1.fake", pan[len(pan)-4:], nil
+}
+
+// newCheckoutSvc builds the service with fakes. sandbox defaults to true so the
+// card path is exercised; individual tests can rebuild with sandbox=false.
+func newCheckoutSvc(repo repository.Querier, charger Charger, qr QRIssuer, vault Tokenizer, sandbox bool) CheckoutService {
+	return NewCheckoutService(repo, charger, qr, vault, sandbox, zerolog.Nop())
+}
+
+// mkLink seeds an active link and returns it.
+func mkLink(f *fakeCheckoutRepo, merchant uuid.UUID, publicID string, amountMinor int64, methods []string) repository.PaymentLink {
+	l := repository.PaymentLink{
+		ID:             toPgUUID(uuid.New()),
+		MerchantID:     toPgUUID(merchant),
+		PublicID:       publicID,
+		Title:          "Coffee",
+		Description:    "Latte",
+		AmountMinor:    amountMinor,
+		Currency:       "THB",
+		AllowedMethods: methods,
+		LinkType:       "single_use",
+		Status:         "active",
+	}
+	f.putLink(l)
+	f.merchantNames[merchant] = "Acme Cafe"
+	return l
+}
+
+// ---- Task 3 tests ----------------------------------------------------------
+
+func TestCreateFromLinkReturnsTokenAndDisplay(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	mkLink(repo, merchant, "pl_abc", 5000, []string{"card", "promptpay"})
+	svc := newCheckoutSvc(repo, &fakeCharger{}, &fakeQR{}, &fakeVault{}, true)
+
+	view, err := svc.CreateFromLink(context.Background(), "pl_abc")
+	if err != nil {
+		t.Fatalf("CreateFromLink: %v", err)
+	}
+	if !strings.HasPrefix(view.Token, "cs_") {
+		t.Fatalf("token = %q want cs_ prefix", view.Token)
+	}
+	if view.Status != string(domain.CheckoutOpen) {
+		t.Fatalf("status = %q want open", view.Status)
+	}
+	if view.AmountMinor != 5000 || view.Currency != "THB" {
+		t.Fatalf("amount/currency = %d/%s", view.AmountMinor, view.Currency)
+	}
+	if view.MerchantName != "Acme Cafe" || view.Title != "Coffee" {
+		t.Fatalf("display = %q / %q", view.MerchantName, view.Title)
+	}
+	if len(view.AllowedMethods) != 2 {
+		t.Fatalf("methods = %v want [card promptpay]", view.AllowedMethods)
+	}
+	if !view.Sandbox {
+		t.Fatal("sandbox flag should be true")
+	}
+	// The RAW token must never be stored — only its hash keys the row.
+	if _, ok := repo.sessByHash[middleware.HashAPIKey(view.Token)]; !ok {
+		t.Fatal("session not stored under token hash")
+	}
+	if _, ok := repo.sessByHash[view.Token]; ok {
+		t.Fatal("raw token must not be a storage key")
+	}
+}
+
+func TestCreateFromLinkInactiveLinkIs404(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	l := mkLink(repo, merchant, "pl_dead", 100, nil)
+	l.Status = "disabled"
+	repo.putLink(l)
+	svc := newCheckoutSvc(repo, &fakeCharger{}, &fakeQR{}, &fakeVault{}, true)
+
+	_, err := svc.CreateFromLink(context.Background(), "pl_dead")
+	if err != domain.ErrPaymentLinkNotFound {
+		t.Fatalf("disabled link err = %v want ErrPaymentLinkNotFound", err)
+	}
+}
+
+func TestCreateFromLinkUnknownIs404(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	svc := newCheckoutSvc(repo, &fakeCharger{}, &fakeQR{}, &fakeVault{}, true)
+	if _, err := svc.CreateFromLink(context.Background(), "pl_nope"); err != domain.ErrPaymentLinkNotFound {
+		t.Fatalf("unknown link err = %v want ErrPaymentLinkNotFound", err)
+	}
+}
+
+var _ = time.Now // retained; time is used by later tasks' tests
