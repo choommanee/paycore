@@ -54,6 +54,9 @@ payment-gateway/
 | POST | `/v1/qr-payments` | สร้าง QR (PromptPay/card/cross-border) | API key |
 | GET  | `/v1/qr-payments/{id}` | poll สถานะ QR | API key |
 | POST | `/v1/webhooks/qr` | callback ยืนยันจ่าย QR จากธนาคาร/PSP (verify HMAC) | HMAC sig |
+| POST | `/v1/checkout/sessions` | สร้าง hosted-checkout session จาก payment link | none (IP rate-limited) |
+| GET  | `/v1/checkout/sessions/{token}` | poll สถานะ checkout session | none (session token) |
+| POST | `/v1/checkout/sessions/{token}/pay` | จ่ายเงินผ่าน checkout session (card/promptpay) | none (session token) |
 | GET  | `/healthz` · `/readyz` | probes | none |
 
 ### Authentication (API key)
@@ -90,6 +93,26 @@ Money routes อยู่หลัง API-key auth ดังนั้น browser
 1. server สร้าง checkout session → ออก **short-lived / single-payment session token** ที่ปลอดภัยพอจะส่งเข้า browser
 2. browser เรียก unauthenticated checkout-session route group ด้วย session token นั้น (ไม่ใช่ secret key)
 3. server (ถือ secret key) เป็นผู้ settle / capture
+
+### Hosted checkout (Phase 3)
+
+Public, unauthenticated endpoints drive the `/pay/[publicId]` page. The opaque
+session token (returned once on create, stored only as a SHA-256 hash) is the
+credential:
+
+- `POST /v1/checkout/sessions` `{ "link": "<public_id>" }` → `session_token` + display (IP rate-limited)
+- `GET  /v1/checkout/sessions/:token` → status + display (poll)
+- `POST /v1/checkout/sessions/:token/pay` `{ "method": "card"|"promptpay", ... }`
+
+PromptPay works in all modes (confirmed via the QR webhook / sandbox simulator).
+Card entry accepts a raw PAN ONLY when `SANDBOX_MODE=true`; in production it
+returns `CHECKOUT_METHOD_UNAVAILABLE` (real hosted-fields tokenization is out of
+scope). Money is stored in `checkout_sessions.amount_minor` (satang) and converted
+to decimal major units before calling the payment / QR services.
+
+Config: `PUBLIC_BASE_URL` (base URL used to build the checkout link shown to
+merchants) and `CHECKOUT_RATE_LIMIT_PER_MIN` (default 30 — IP-keyed limit on
+`POST /v1/checkout/sessions` only; the other two checkout routes are unlimited).
 
 ### Performance & rate limiting
 - Rate limit เป็น **per-merchant** (keyed `m:<merchant_id>`) จาก `RATE_LIMIT_PER_SEC` (default 600/s); health/metrics/webhook ไม่ถูก limit. ไม่มี global per-IP limiter.
