@@ -219,6 +219,10 @@ func (s *checkoutService) Pay(ctx context.Context, token string, req domain.Chec
 	case "card":
 		return s.payCard(ctx, row, req)
 	default:
+		// The six Phase 4 wallet / redirect methods share one mock adapter.
+		if domain.IsWalletMethod(req.Method) {
+			return s.payWallet(ctx, row, req)
+		}
 		return nil, domain.ErrCheckoutMethodUnavailable
 	}
 }
@@ -358,6 +362,69 @@ func (s *checkoutService) payCard(ctx context.Context, row repository.CheckoutSe
 	view := s.buildView(ctx, updated, nil)
 	view.NextActionURL = p.NextActionURL
 	return view, nil
+}
+
+// payWallet is the MOCK adapter for the Phase 4 e-wallet / redirect methods
+// (mobile_banking, truemoney, shopeepay, alipay, wechat, card_installment). It is
+// SANDBOX-ONLY: in production these are stubs for a real PSP redirect, which is
+// out of scope, so it refuses. Unlike card/promptpay it charges NOTHING — it
+// reserves a single_use link (exactly like the card path, so two sessions cannot
+// both complete the same link) and moves the session to requires_action. The
+// sandbox-only ConfirmMock endpoint then flips it to paid (closing the link) or
+// failed (releasing the reservation). No payments/qr_payments row is created and
+// no money is converted or moved.
+func (s *checkoutService) payWallet(ctx context.Context, row repository.CheckoutSession, req domain.CheckoutPayRequest) (*domain.CheckoutSessionView, error) {
+	if !s.sandbox {
+		// Real PSP redirect integration is out of scope: refuse rather than
+		// silently mark anything paid.
+		return nil, domain.ErrCheckoutMethodUnavailable
+	}
+
+	// Reserve a single_use link BEFORE going to requires_action — identical to the
+	// card path. ConsumePaymentLinkIfActive atomically flips active -> paid; no row
+	// means another session already consumed it, so refuse without proceeding.
+	var reservedLink *repository.PaymentLink
+	if row.PaymentLinkID.Valid {
+		link, err := s.repo.GetPaymentLink(ctx, repository.GetPaymentLinkParams{
+			ID: row.PaymentLinkID, MerchantID: row.MerchantID,
+		})
+		// Fail closed on any load error: a session referencing a link must load it
+		// to know whether it is single_use and needs reservation.
+		if err != nil {
+			return nil, err
+		}
+		if link.LinkType == "single_use" {
+			consumed, cerr := s.repo.ConsumePaymentLinkIfActive(ctx, repository.ConsumePaymentLinkIfActiveParams{
+				ID: row.PaymentLinkID, MerchantID: row.MerchantID,
+			})
+			if cerr != nil {
+				if errors.Is(cerr, pgx.ErrNoRows) {
+					_, _ = s.transition(ctx, row, domain.CheckoutFailed)
+					return nil, domain.ErrCheckoutMethodUnavailable
+				}
+				return nil, cerr
+			}
+			reservedLink = &consumed
+		}
+	}
+
+	updated, err := s.repo.UpdateCheckoutSession(ctx, repository.UpdateCheckoutSessionParams{
+		ID:             row.ID,
+		Status:         string(domain.CheckoutRequiresAction),
+		SelectedMethod: req.Method,
+		PaymentID:      row.PaymentID,   // stays NULL
+		QrPaymentID:    row.QrPaymentID, // stays NULL
+		CustomerEmail:  strFallback(req.CustomerEmail, row.CustomerEmail),
+	})
+	if err != nil {
+		// Persisting requires_action failed: release the reservation so the
+		// single_use link can be retried.
+		s.releaseLinkReservation(ctx, reservedLink, row)
+		return nil, err
+	}
+	// No QRPayload / NextActionURL: the mock approve/decline is driven inline by
+	// the frontend against ConfirmMock; there is no external redirect.
+	return s.buildView(ctx, updated, nil), nil
 }
 
 // releaseLinkReservation undoes a single_use link reservation made by

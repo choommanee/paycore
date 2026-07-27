@@ -824,3 +824,109 @@ func TestPayCardFailsClosedWhenLinkMissing(t *testing.T) {
 		t.Fatalf("charger called %d times, want 0 (must not charge when link is unverifiable)", got)
 	}
 }
+
+// ---- Task: payWallet -------------------------------------------------------
+
+func TestPayWalletRequiresActionAndReservesSingleUse(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	mkLink(repo, merchant, "pl_abc", 5000, []string{"card", "truemoney"})
+	svc := newCheckoutSvc(repo, &fakeCharger{}, &fakeQR{}, &fakeVault{}, true)
+	tok := openSession(t, repo, svc)
+
+	view, err := svc.Pay(context.Background(), tok, domain.CheckoutPayRequest{Method: "truemoney"})
+	if err != nil {
+		t.Fatalf("Pay: %v", err)
+	}
+	if view.Status != string(domain.CheckoutRequiresAction) {
+		t.Fatalf("status = %q want requires_action", view.Status)
+	}
+	if view.SelectedMethod != "truemoney" {
+		t.Fatalf("selected_method = %q want truemoney", view.SelectedMethod)
+	}
+	// Wallet mock moves no money: no QR payload, no 3DS redirect URL.
+	if view.QRPayload != "" || view.NextActionURL != "" {
+		t.Fatalf("wallet must not set qr_payload/next_action_url: %q / %q", view.QRPayload, view.NextActionURL)
+	}
+	// single_use link reserved (flipped to paid) exactly like the card path.
+	if len(repo.linkStatusSets) != 1 || repo.linkStatusSets[0] != "paid" {
+		t.Fatalf("link status sets = %v want [paid] (reserved)", repo.linkStatusSets)
+	}
+}
+
+func TestPayWalletBlockedOutsideSandbox(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	mkLink(repo, merchant, "pl_abc", 5000, []string{"alipay"})
+	svc := newCheckoutSvc(repo, &fakeCharger{}, &fakeQR{}, &fakeVault{}, false) // sandbox OFF
+	tok := openSession(t, repo, svc)
+
+	_, err := svc.Pay(context.Background(), tok, domain.CheckoutPayRequest{Method: "alipay"})
+	if err != domain.ErrCheckoutMethodUnavailable {
+		t.Fatalf("err = %v want ErrCheckoutMethodUnavailable (wallet is sandbox-only)", err)
+	}
+	// Refused before any reservation.
+	if len(repo.linkStatusSets) != 0 {
+		t.Fatalf("no link reservation expected, got %v", repo.linkStatusSets)
+	}
+}
+
+func TestPayWalletMethodNotAllowedByLink(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	mkLink(repo, merchant, "pl_abc", 5000, []string{"promptpay"}) // wallet NOT allowed
+	svc := newCheckoutSvc(repo, &fakeCharger{}, &fakeQR{}, &fakeVault{}, true)
+	tok := openSession(t, repo, svc)
+
+	_, err := svc.Pay(context.Background(), tok, domain.CheckoutPayRequest{Method: "shopeepay"})
+	if err != domain.ErrCheckoutMethodUnavailable {
+		t.Fatalf("err = %v want ErrCheckoutMethodUnavailable", err)
+	}
+}
+
+func TestPayWalletReusableLinkNotReserved(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	l := mkLink(repo, merchant, "pl_abc", 5000, []string{"wechat"})
+	l.LinkType = "reusable"
+	repo.putLink(l)
+	svc := newCheckoutSvc(repo, &fakeCharger{}, &fakeQR{}, &fakeVault{}, true)
+	tok := openSession(t, repo, svc)
+
+	view, err := svc.Pay(context.Background(), tok, domain.CheckoutPayRequest{Method: "wechat"})
+	if err != nil {
+		t.Fatalf("Pay: %v", err)
+	}
+	if view.Status != string(domain.CheckoutRequiresAction) {
+		t.Fatalf("status = %q want requires_action", view.Status)
+	}
+	if len(repo.linkStatusSets) != 0 {
+		t.Fatalf("reusable link must not reserve, got %v", repo.linkStatusSets)
+	}
+}
+
+func TestPayWalletSingleUseAlreadyConsumedRefuses(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	l := mkLink(repo, merchant, "pl_abc", 5000, []string{"truemoney"})
+	l.Status = "paid" // already consumed by a prior session
+	repo.putLink(l)
+	svc := newCheckoutSvc(repo, &fakeCharger{}, &fakeQR{}, &fakeVault{}, true)
+	// Open a session directly against the (now paid) link's stored row via a fresh
+	// active link, then simulate the race: re-mark it paid before paying.
+	// Simpler: open while active, then flip to paid, then pay.
+	l.Status = "active"
+	repo.putLink(l)
+	tok := openSession(t, repo, svc)
+	l.Status = "paid"
+	repo.putLink(l)
+
+	_, err := svc.Pay(context.Background(), tok, domain.CheckoutPayRequest{Method: "truemoney"})
+	if err != domain.ErrCheckoutMethodUnavailable {
+		t.Fatalf("err = %v want ErrCheckoutMethodUnavailable (link already consumed)", err)
+	}
+	row, _ := repo.GetCheckoutSessionByTokenHash(context.Background(), middleware.HashAPIKey(tok))
+	if row.Status != string(domain.CheckoutFailed) {
+		t.Fatalf("session status = %q want failed", row.Status)
+	}
+}
