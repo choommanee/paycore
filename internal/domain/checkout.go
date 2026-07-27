@@ -18,10 +18,35 @@ const (
 	CheckoutExpired        CheckoutStatus = "expired"
 )
 
-// CheckoutSupportedMethods is the set of methods the hosted checkout can actually
-// process in Phase 3: card (sandbox-gated, raw PAN) and promptpay (all modes).
-// Wallet / redirect methods (Beam parity) arrive in Phase 4.
-var CheckoutSupportedMethods = []string{"card", "promptpay"}
+// CheckoutSupportedMethods is the set of methods the hosted checkout can process.
+// Order is the display order on the payment page. card (sandbox raw PAN) and
+// promptpay (all modes) come from Phase 3; the six wallet / redirect methods are
+// Phase 4 MOCK adapters (sandbox-gated) that complete via /confirm-mock.
+var CheckoutSupportedMethods = []string{
+	"card", "promptpay",
+	"mobile_banking", "truemoney", "shopeepay", "alipay", "wechat", "card_installment",
+}
+
+// CheckoutWalletMethods are the Phase 4 e-wallet / redirect methods. They share a
+// single MOCK adapter (service.payWallet): no card data, no PaymentService /
+// QRService call, no money moved — the session goes to requires_action and is
+// completed by the sandbox-only /confirm-mock endpoint. In production (sandbox
+// off) they are refused (ErrCheckoutMethodUnavailable); real PSP wiring is out of
+// scope for this phase.
+var CheckoutWalletMethods = []string{
+	"mobile_banking", "truemoney", "shopeepay", "alipay", "wechat", "card_installment",
+}
+
+// IsWalletMethod reports whether m is a Phase 4 wallet / redirect method handled
+// by the mock wallet adapter.
+func IsWalletMethod(m string) bool {
+	for _, w := range CheckoutWalletMethods {
+		if w == m {
+			return true
+		}
+	}
+	return false
+}
 
 // DisplayMethods intersects a link's allowed methods with the methods the
 // checkout can process, preserving CheckoutSupportedMethods order. An empty
@@ -62,11 +87,17 @@ type CardInput struct {
 }
 
 // CheckoutPayRequest selects a method and carries its data. Card is required only
-// when Method == "card" (enforced in the service, not the validator).
+// when Method == "card" (enforced in the service). Wallet methods carry no data.
 type CheckoutPayRequest struct {
-	Method        string     `json:"method" validate:"required,oneof=card promptpay"`
+	Method        string     `json:"method" validate:"required,oneof=card promptpay mobile_banking truemoney shopeepay alipay wechat card_installment"`
 	Card          *CardInput `json:"card" validate:"omitempty"`
 	CustomerEmail string     `json:"customer_email" validate:"omitempty,email"`
+}
+
+// CheckoutConfirmMockRequest is the body of the sandbox-only confirm-mock endpoint
+// that simulates a wallet approve (true) or decline (false).
+type CheckoutConfirmMockRequest struct {
+	Approve bool `json:"approve"`
 }
 
 // CheckoutSessionView is the PUBLIC, secret-free projection returned to the

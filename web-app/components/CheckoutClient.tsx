@@ -31,10 +31,22 @@ type CheckoutView = {
   session_token?: string;
 };
 
+// Labels for every method the registry can surface (Phase 3 card/promptpay +
+// Phase 4 wallet / redirect methods).
 const METHOD_LABEL: Record<string, string> = {
   card: "บัตรเครดิต/เดบิต",
   promptpay: "PromptPay",
+  mobile_banking: "Mobile Banking",
+  truemoney: "TrueMoney Wallet",
+  shopeepay: "ShopeePay",
+  alipay: "Alipay",
+  wechat: "WeChat Pay",
+  card_installment: "ผ่อนชำระบัตร",
 };
+
+// The six Phase 4 wallet / redirect methods share one mock flow.
+const WALLET_METHODS = ["mobile_banking", "truemoney", "shopeepay", "alipay", "wechat", "card_installment"];
+const isWallet = (m: string) => WALLET_METHODS.includes(m);
 
 export default function CheckoutClient({ publicId }: { publicId: string }) {
   const [view, setView] = useState<CheckoutView | null>(null);
@@ -108,8 +120,9 @@ export default function CheckoutClient({ publicId }: { publicId: string }) {
     return <div className="text-paycore-muted mt-10">กำลังโหลด…</div>;
   }
 
-  // Terminal / QR states are rendered by the PromptPay + status component (Task 8).
-  if (view.status === "paid" || view.status === "expired" || view.status === "failed" || view.selected_method === "promptpay") {
+  // Any non-open session (requires_action for promptpay QR or a wallet mock, or a
+  // terminal state) is driven by the status view.
+  if (view.status !== "open") {
     return <CheckoutStatusView token={token} initial={view} />;
   }
 
@@ -140,7 +153,27 @@ export default function CheckoutClient({ publicId }: { publicId: string }) {
       </div>
 
       {method === "promptpay" && (
-        <PayPromptPayButton token={token} onPaid={setView} setErr={setErr} />
+        <PayMethodButton token={token} method="promptpay" label="สร้าง QR PromptPay" busyLabel="กำลังสร้าง QR…" onDone={setView} setErr={setErr} />
+      )}
+
+      {isWallet(method) && (
+        <>
+          {!view.sandbox && (
+            <p className="text-xs rounded-lg bg-yellow-500/10 text-yellow-300 px-3 py-2">
+              ช่องทางนี้ยังไม่พร้อมใช้งานบนระบบนี้
+            </p>
+          )}
+          {view.sandbox && (
+            <PayMethodButton
+              token={token}
+              method={method}
+              label={`ดำเนินการต่อด้วย ${METHOD_LABEL[method] ?? method}`}
+              busyLabel="กำลังดำเนินการ…"
+              onDone={setView}
+              setErr={setErr}
+            />
+          )}
+        </>
       )}
 
       {method === "card" && view.sandbox && (
@@ -186,9 +219,14 @@ function waitForQRCode(): Promise<NonNullable<Window["QRCode"]>> {
   });
 }
 
-// PayPromptPayButton initiates the PromptPay charge, then hands off to the status
-// view (which renders the QR + polls).
-function PayPromptPayButton({ token, onPaid, setErr }: { token: string; onPaid: (v: CheckoutView) => void; setErr: (s: string) => void }) {
+// PayMethodButton POSTs /pay for a data-less method (promptpay or a wallet slug),
+// then hands the returned requires_action view to the status view via onDone.
+function PayMethodButton({
+  token, method, label, busyLabel, onDone, setErr,
+}: {
+  token: string; method: string; label: string; busyLabel: string;
+  onDone: (v: CheckoutView) => void; setErr: (s: string) => void;
+}) {
   const [busy, setBusy] = useState(false);
   async function start() {
     setErr("");
@@ -196,30 +234,34 @@ function PayPromptPayButton({ token, onPaid, setErr }: { token: string; onPaid: 
     const res = await fetch(`/api/checkout/sessions/${token}/pay`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ method: "promptpay" }),
+      body: JSON.stringify({ method }),
     });
     const env = await res.json().catch(() => null);
     setBusy(false);
     if (!res.ok) {
-      setErr(env?.message ?? "สร้าง QR ไม่สำเร็จ");
+      setErr(env?.message ?? "ดำเนินการไม่สำเร็จ");
       return;
     }
-    onPaid(env.data as CheckoutView); // status becomes requires_action -> status view takes over
+    onDone(env.data as CheckoutView);
   }
   return (
     <button onClick={start} disabled={busy} className="w-full rounded-lg bg-paycore-primary hover:bg-paycore-primaryHover text-white font-medium px-4 py-2 disabled:opacity-60">
-      {busy ? "กำลังสร้าง QR…" : "สร้าง QR PromptPay"}
+      {busy ? busyLabel : label}
     </button>
   );
 }
 
-// CheckoutStatusView renders the QR (for PromptPay) and polls session status
-// until a terminal state, then shows success + optional return_url.
+// CheckoutStatusView renders the PromptPay QR or the wallet mock approve/decline
+// panel while awaiting action, polls session status until a terminal state, then
+// shows success + optional return_url.
 function CheckoutStatusView({ token, initial }: { token: string; initial: CheckoutView }) {
   const [view, setView] = useState<CheckoutView>(initial);
   const qrBox = useRef<HTMLDivElement>(null);
 
-  // Render the QR whenever a payload is present and not yet paid.
+  const walletAwaiting =
+    view.status === "requires_action" && !!view.selected_method && WALLET_METHODS.includes(view.selected_method);
+
+  // Render the QR whenever a PromptPay payload is present and not yet paid.
   useEffect(() => {
     if (!view.qr_payload || view.status === "paid") return;
     let cancelled = false;
@@ -228,9 +270,6 @@ function CheckoutStatusView({ token, initial }: { token: string; initial: Checko
         const QR = await waitForQRCode();
         if (cancelled || !qrBox.current) return;
         qrBox.current.innerHTML = "";
-        // Use the resolved global's own CorrectLevel.M rather than a hardcoded
-        // numeric literal: davidshimjs/qrcodejs defines the enum as
-        // { L:1, M:0, Q:3, H:2 }, so a literal "1" is actually level L, not M.
         new QR(qrBox.current, { text: view.qr_payload!, width: 220, height: 220, correctLevel: QR.CorrectLevel.M });
       } catch {
         /* leave the payload text visible as a fallback */
@@ -250,6 +289,18 @@ function CheckoutStatusView({ token, initial }: { token: string; initial: Checko
     }, 3000);
     return () => clearInterval(id);
   }, [token, view.status]);
+
+  // Mock wallet approve/decline (sandbox only) → flips the session server-side.
+  async function confirmMock(approve: boolean) {
+    const res = await fetch(`/api/checkout/sessions/${token}/confirm-mock`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approve }),
+    });
+    if (!res.ok) return;
+    const env = await res.json();
+    setView(env.data as CheckoutView);
+  }
 
   if (view.status === "paid") {
     return (
@@ -273,6 +324,28 @@ function CheckoutStatusView({ token, initial }: { token: string; initial: Checko
           {view.status === "expired" ? "หมดเวลาชำระเงิน" : "ชำระเงินไม่สำเร็จ"}
         </h1>
         <p className="text-paycore-muted text-sm">โปรดลองอีกครั้ง</p>
+      </div>
+    );
+  }
+
+  // Wallet mock: simulate the PSP approve/decline screen (sandbox only).
+  if (walletAwaiting) {
+    return (
+      <div className="max-w-md w-full rounded-xl2 bg-paycore-surface p-6 mt-10 text-center space-y-4">
+        <p className="text-paycore-muted text-sm">{view.merchant_name}</p>
+        <h1 className="text-lg font-semibold">{METHOD_LABEL[view.selected_method ?? ""] ?? view.selected_method}</h1>
+        <p className="text-2xl font-bold">{formatMoney(view.amount_minor, view.currency)}</p>
+        <p className="text-xs rounded-lg bg-yellow-500/10 text-yellow-300 px-3 py-2">
+          โหมดทดสอบ (Sandbox) — จำลองหน้าอนุมัติของผู้ให้บริการ
+        </p>
+        <div className="flex gap-2">
+          <button onClick={() => confirmMock(true)} className="flex-1 rounded-lg bg-paycore-primary hover:bg-paycore-primaryHover text-white font-medium px-4 py-2">
+            อนุมัติการชำระเงิน
+          </button>
+          <button onClick={() => confirmMock(false)} className="flex-1 rounded-lg border border-white/15 text-paycore-muted px-4 py-2">
+            ปฏิเสธ
+          </button>
+        </div>
       </div>
     );
   }
