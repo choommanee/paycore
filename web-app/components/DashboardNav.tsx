@@ -1,3 +1,5 @@
+import LogoutButton from "@/components/LogoutButton";
+
 export default function DashboardNav({ active }: { active?: string }) {
   const items = [
     { href: "/dashboard", label: "หน้าหลัก" },
@@ -22,9 +24,7 @@ export default function DashboardNav({ active }: { active?: string }) {
           </a>
         ))}
       </nav>
-      <form action="/api/auth/logout" method="post">
-        <button className="text-sm text-paycore-muted hover:text-paycore-text">ออกจากระบบ</button>
-      </form>
+      <LogoutButton />
     </header>
   );
 }
