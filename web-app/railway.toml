@@ -1,0 +1,12 @@
+# Railway service config for the PayCore Next.js app (dashboard + hosted checkout + landing).
+# Deploy: from web-app/ run `railway up -s paycore-web --ci` (service linked to project `paycore`).
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Next standalone serves fast; a simple root check is enough (no DB here — it proxies the API).
+healthcheckPath = "/login"
+healthcheckTimeout = 120
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
