@@ -18,5 +18,5 @@ export function middleware(req: NextRequest) {
 // Guard only the dashboard pages. /login, /pay/*, /api/*, and Next internals are
 // excluded so public checkout and the login page stay reachable without a cookie.
 export const config = {
-  matcher: ["/", "/transactions/:path*", "/settings/:path*", "/links/:path*"],
+  matcher: ["/dashboard/:path*", "/transactions/:path*", "/settings/:path*", "/links/:path*"],
 };

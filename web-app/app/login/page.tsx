@@ -8,7 +8,7 @@ export default function LoginPage() {
   async function devLogin() {
     setBusy(true);
     const res = await fetch("/api/auth/dev-login", { method: "POST" });
-    if (res.ok) window.location.href = "/";
+    if (res.ok) window.location.href = "/dashboard";
     else setBusy(false);
   }
 

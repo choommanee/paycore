@@ -33,7 +33,7 @@ export default async function DashboardHome() {
 
   return (
     <main className="min-h-screen p-8 max-w-4xl mx-auto">
-      <DashboardNav active="/" />
+      <DashboardNav active="/dashboard" />
       <p className="text-paycore-muted text-sm mb-6">สวัสดี {me.name || me.email} · {me.merchant_name}</p>
 
       <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
