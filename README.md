@@ -56,7 +56,8 @@ payment-gateway/
 | POST | `/v1/webhooks/qr` | callback ยืนยันจ่าย QR จากธนาคาร/PSP (verify HMAC) | HMAC sig |
 | POST | `/v1/checkout/sessions` | สร้าง hosted-checkout session จาก payment link | none (IP rate-limited) |
 | GET  | `/v1/checkout/sessions/{token}` | poll สถานะ checkout session | none (session token) |
-| POST | `/v1/checkout/sessions/{token}/pay` | จ่ายเงินผ่าน checkout session (card/promptpay) | none (session token) |
+| POST | `/v1/checkout/sessions/{token}/pay` | จ่ายเงินผ่าน checkout session (card/promptpay/wallet) | none (session token) |
+| POST | `/v1/checkout/sessions/{token}/confirm-mock` | sandbox-only: approve/decline wallet mock payment | none (session token, `SANDBOX_MODE=true` only) |
 | GET  | `/healthz` · `/readyz` | probes | none |
 
 ### Authentication (API key)
@@ -113,6 +114,21 @@ to decimal major units before calling the payment / QR services.
 Config: `PUBLIC_BASE_URL` (base URL used to build the checkout link shown to
 merchants) and `CHECKOUT_RATE_LIMIT_PER_MIN` (default 30 — IP-keyed limit on
 `POST /v1/checkout/sessions` only; the other two checkout routes are unlimited).
+
+### E-wallet / redirect methods (Phase 4)
+
+Beam-parity wallet / redirect methods — `mobile_banking`, `truemoney`,
+`shopeepay`, `alipay`, `wechat`, `card_installment` — are **mock adapters**,
+enabled ONLY when `SANDBOX_MODE=true`. They share one code path that moves no
+money: `POST /v1/checkout/sessions/:token/pay {"method":"truemoney"}` reserves a
+`single_use` link and sets the session to `requires_action`; the sandbox-only
+`POST /v1/checkout/sessions/:token/confirm-mock {"approve":true|false}` then flips
+it to `paid` (closing the link) or `failed` (releasing the reservation). No
+`payments`/`qr_payments` row is created (they will not appear under `/payments`).
+
+In production (`SANDBOX_MODE=false`) wallet pay returns `422
+CHECKOUT_METHOD_UNAVAILABLE` and `confirm-mock` is absent (`404`); real PSP
+integration is out of scope for this phase.
 
 ### Performance & rate limiting
 - Rate limit เป็น **per-merchant** (keyed `m:<merchant_id>`) จาก `RATE_LIMIT_PER_SEC` (default 600/s); health/metrics/webhook ไม่ถูก limit. ไม่มี global per-IP limiter.
