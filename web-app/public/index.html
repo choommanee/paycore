@@ -3,12 +3,13 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>PayCore — รับชำระบัตร &amp; PromptPay สำหรับธุรกิจไทย</title>
-<meta name="description" content="PayCore เป็น payment gateway แบบ full-acquiring สำหรับประเทศไทย — รับบัตรเครดิต/เดบิต 3DS 2.x, PromptPay/Thai QR, การกระทบยอด (settlement) และ webhooks ในที่เดียว มาตรฐาน PCI-DSS Level 1 สอดคล้อง ธปท." />
+<title>PayCore — รับชำระบัตร, PromptPay &amp; e-wallet สำหรับธุรกิจไทย</title>
+<meta name="description" content="PayCore เป็น payment gateway สำหรับประเทศไทย — สร้าง payment link แบบไม่ต้องเขียนโค้ด, หน้า hosted checkout รับบัตร 3DS 2.x, PromptPay/Thai QR และ e-wallet (TrueMoney, ShopeePay, Alipay, WeChat Pay), พร้อม dashboard, refund, webhooks และการกระทบยอด มาตรฐาน PCI-DSS สอดคล้อง ธปท." />
 <link rel="icon" href="/assets/favicon.svg" />
 <link rel="stylesheet" href="/assets/paycore.css" />
+<script>document.documentElement.className += " js";</script>
 <style>
-  /* ---- landing-specific styles (reuse paycore tokens) ---- */
+  /* ---- landing-specific styles (reuse paycore tokens; do not redefine them) ---- */
   .lp-nav{
     height:var(--pc-nav-h);position:sticky;top:0;z-index:40;
     display:flex;align-items:center;gap:var(--pc-s5);
@@ -27,7 +28,20 @@
   .lp-wrap{max-width:var(--pc-maxw);margin:0 auto;padding:0 var(--pc-s6);width:100%}
   section{scroll-margin-top:calc(var(--pc-nav-h) + 8px)}
 
-  /* hero */
+  /* visible keyboard focus for landing links (buttons handled by paycore.css) */
+  .lp-nav-links a:focus-visible,.lp-nav a.pc-brand:focus-visible,
+  .lp-footer a:focus-visible,.lp-code a:focus-visible,main a:not(.pc-btn):focus-visible{
+    outline:2px solid var(--pc-accent);outline-offset:3px;border-radius:var(--pc-r-sm)}
+
+  /* scroll reveal (only active when JS present + motion allowed) */
+  .js [data-reveal]{opacity:0;transform:translateY(16px);
+    transition:opacity .6s ease,transform .6s cubic-bezier(.2,.8,.2,1)}
+  .js [data-reveal].in{opacity:1;transform:none}
+  .js [data-reveal][data-reveal-delay="1"]{transition-delay:.07s}
+  .js [data-reveal][data-reveal-delay="2"]{transition-delay:.14s}
+  .js [data-reveal][data-reveal-delay="3"]{transition-delay:.21s}
+
+  /* ---------------------------------------------------------------- hero -- */
   .lp-hero{
     position:relative;overflow:hidden;
     background:
@@ -36,24 +50,45 @@
     border-bottom:1px solid var(--pc-line);
     padding:var(--pc-s12) 0 var(--pc-s12);
   }
+  /* subtle engineered grid pattern behind hero */
+  .lp-hero::before{
+    content:"";position:absolute;inset:0;pointer-events:none;opacity:.5;
+    background-image:
+      linear-gradient(to right, rgba(24,95,165,.05) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(24,95,165,.05) 1px, transparent 1px);
+    background-size:34px 34px;
+    -webkit-mask-image:radial-gradient(760px 460px at 78% 12%, #000, transparent 72%);
+            mask-image:radial-gradient(760px 460px at 78% 12%, #000, transparent 72%);
+  }
+  .lp-hero .lp-wrap{position:relative}
   .lp-hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:var(--pc-s10);align-items:center}
   .lp-eyebrow{
     display:inline-flex;align-items:center;gap:8px;padding:5px 12px;border-radius:var(--pc-r-pill);
     background:var(--pc-accent-bg);color:var(--pc-accent-ink);
     font-size:var(--pc-fs-12);font-weight:600;margin-bottom:var(--pc-s4);
   }
-  .lp-eyebrow .dot{width:7px;height:7px;border-radius:50%;background:var(--pc-success)}
-  .lp-h1{font-size:44px;line-height:1.1;letter-spacing:-.02em;margin:0 0 var(--pc-s4)}
+  .lp-eyebrow .dot{width:7px;height:7px;border-radius:50%;background:var(--pc-success);
+    box-shadow:0 0 0 0 rgba(15,110,86,.5);animation:lp-pulse 2.4s ease-out infinite}
+  @keyframes lp-pulse{0%{box-shadow:0 0 0 0 rgba(15,110,86,.45)}70%{box-shadow:0 0 0 7px rgba(15,110,86,0)}100%{box-shadow:0 0 0 0 rgba(15,110,86,0)}}
+  .lp-h1{font-size:46px;line-height:1.08;letter-spacing:-.025em;margin:0 0 var(--pc-s4)}
   .lp-h1 .hl{color:var(--pc-accent)}
-  .lp-sub{font-size:var(--pc-fs-18);color:var(--pc-ink-2);max-width:540px;margin:0 0 var(--pc-s6);line-height:1.55}
+  .lp-sub{font-size:var(--pc-fs-18);color:var(--pc-ink-2);max-width:548px;margin:0 0 var(--pc-s6);line-height:1.55}
   .lp-cta{display:flex;gap:var(--pc-s3);flex-wrap:wrap;align-items:center}
-  .lp-cta-note{font-size:var(--pc-fs-12);color:var(--pc-muted);margin-top:var(--pc-s4)}
+  .lp-cta-note{font-size:var(--pc-fs-12);color:var(--pc-muted);margin-top:var(--pc-s4);
+    display:flex;gap:var(--pc-s4);flex-wrap:wrap}
+  .lp-cta-note span{display:inline-flex;align-items:center;gap:6px}
+  .lp-cta-note svg{width:14px;height:14px;color:var(--pc-success)}
 
-  /* hero visual card */
+  /* hero visual card (stack: receipt on top, method rail behind) */
+  .lp-visual-stack{position:relative}
   .lp-visual{
+    position:relative;z-index:2;
     background:var(--pc-surface);border:1px solid var(--pc-line);
     border-radius:var(--pc-r-xl);box-shadow:var(--pc-sh-4);padding:var(--pc-s6);
+    animation:lp-float 7s ease-in-out infinite;
   }
+  @keyframes lp-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
+  @media (prefers-reduced-motion:reduce){.lp-visual{animation:none}.lp-eyebrow .dot{animation:none}}
   .lp-visual-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--pc-s5)}
   .lp-visual-amt{font-size:var(--pc-fs-34);font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
   .lp-visual-row{display:flex;align-items:center;justify-content:space-between;
@@ -66,22 +101,21 @@
     border:1px solid var(--pc-line);background:var(--pc-surface-2);
     font-size:var(--pc-fs-12);font-weight:600;color:var(--pc-ink-2);
   }
-
-  /* trust bar */
+  /* -------------------------------------------------------------- trust -- */
   .lp-trust{padding:var(--pc-s6) 0;border-bottom:1px solid var(--pc-line);background:var(--pc-surface)}
   .lp-trust-inner{display:flex;align-items:center;justify-content:center;gap:var(--pc-s8);flex-wrap:wrap}
   .lp-trust-item{display:flex;align-items:center;gap:8px;color:var(--pc-muted);font-size:var(--pc-fs-13);font-weight:600}
   .lp-trust-item svg{width:18px;height:18px;color:var(--pc-accent)}
 
-  /* generic section */
+  /* ------------------------------------------------------------ section -- */
   .lp-section{padding:var(--pc-s12) 0}
   .lp-section.alt{background:var(--pc-surface);border-top:1px solid var(--pc-line);border-bottom:1px solid var(--pc-line)}
-  .lp-head{text-align:center;max-width:660px;margin:0 auto var(--pc-s10)}
+  .lp-head{text-align:center;max-width:680px;margin:0 auto var(--pc-s10)}
   .lp-head .kicker{font-size:var(--pc-fs-12);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--pc-accent);margin-bottom:var(--pc-s3)}
   .lp-head h2{font-size:var(--pc-fs-34);letter-spacing:-.02em;margin-bottom:var(--pc-s3)}
   .lp-head p{font-size:var(--pc-fs-16);color:var(--pc-ink-2);margin:0}
 
-  /* features */
+  /* ----------------------------------------------------------- features -- */
   .lp-features{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--pc-s5)}
   .lp-feat{
     background:var(--pc-surface);border:1px solid var(--pc-line);border-radius:var(--pc-r-lg);
@@ -96,23 +130,110 @@
   .lp-feat-ico svg{width:22px;height:22px}
   .lp-feat h3{font-size:var(--pc-fs-16);margin-bottom:6px}
   .lp-feat p{font-size:var(--pc-fs-13);color:var(--pc-muted);margin:0;line-height:1.55}
+  .lp-feat .lp-tag{display:inline-block;margin-top:var(--pc-s3);font-size:var(--pc-fs-11);font-weight:600;
+    color:var(--pc-accent-ink);background:var(--pc-accent-bg);padding:2px 8px;border-radius:var(--pc-r-pill)}
 
-  /* methods */
-  .lp-methods{display:flex;gap:var(--pc-s3);flex-wrap:wrap;justify-content:center}
+  /* -------------------------------------------------- product preview -- */
+  .lp-preview-grid{display:grid;grid-template-columns:.92fr 1.08fr;gap:var(--pc-s6);align-items:stretch}
+  /* browser frame */
+  .lp-frame{
+    background:var(--pc-surface);border:1px solid var(--pc-line);border-radius:var(--pc-r-lg);
+    box-shadow:var(--pc-sh-4);overflow:hidden;display:flex;flex-direction:column;height:100%;
+  }
+  .lp-frame-bar{display:flex;align-items:center;gap:8px;padding:10px var(--pc-s4);
+    background:var(--pc-surface-2);border-bottom:1px solid var(--pc-line-2)}
+  .lp-frame-bar .d{width:10px;height:10px;border-radius:50%}
+  .lp-frame-bar .d.r{background:#ff5f57}.lp-frame-bar .d.y{background:#febc2e}.lp-frame-bar .d.g{background:#28c840}
+  .lp-frame-url{margin-left:8px;flex:1;display:flex;align-items:center;gap:7px;
+    background:var(--pc-surface);border:1px solid var(--pc-line);border-radius:var(--pc-r-pill);
+    padding:4px 12px;font-family:var(--pc-font-mono);font-size:var(--pc-fs-11);color:var(--pc-muted);
+    overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  .lp-frame-url svg{width:12px;height:12px;color:var(--pc-success);flex:none}
+  .lp-frame-body{padding:var(--pc-s6);flex:1}
+  .lp-frame-cap{display:flex;align-items:center;gap:8px;margin-top:var(--pc-s4);
+    font-size:var(--pc-fs-12);color:var(--pc-muted)}
+  .lp-frame-cap .pc-badge{margin-left:auto}
+
+  /* checkout mockup */
+  .co-head{display:flex;align-items:center;gap:var(--pc-s3);margin-bottom:var(--pc-s5)}
+  .co-logo{width:38px;height:38px;border-radius:var(--pc-r);flex:none;display:flex;align-items:center;
+    justify-content:center;background:linear-gradient(135deg,#f0a63c,#e07c2b);color:#fff;font-weight:700;font-size:var(--pc-fs-16)}
+  .co-merch{font-size:var(--pc-fs-14);font-weight:600}
+  .co-merch small{display:block;color:var(--pc-muted);font-weight:400;font-size:var(--pc-fs-11)}
+  .co-amt{text-align:center;margin:var(--pc-s5) 0}
+  .co-amt .lbl{font-size:var(--pc-fs-12);color:var(--pc-muted)}
+  .co-amt .val{font-size:38px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .co-methods{display:flex;flex-direction:column;gap:var(--pc-s2);margin:var(--pc-s5) 0}
+  .co-m{display:flex;align-items:center;gap:var(--pc-s3);padding:11px var(--pc-s4);
+    border:1px solid var(--pc-line);border-radius:var(--pc-r);background:var(--pc-surface);cursor:default}
+  .co-m.sel{border-color:var(--pc-accent);box-shadow:0 0 0 3px var(--pc-accent-bg);background:#fbfdff}
+  .co-m .co-radio{width:17px;height:17px;border-radius:50%;border:2px solid var(--pc-line);flex:none;position:relative}
+  .co-m.sel .co-radio{border-color:var(--pc-accent)}
+  .co-m.sel .co-radio::after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--pc-accent)}
+  .co-m .co-mname{font-size:var(--pc-fs-13);font-weight:600;flex:1}
+  .co-fields{display:grid;grid-template-columns:1fr 1fr;gap:var(--pc-s2);margin-bottom:var(--pc-s5)}
+  .co-field{border:1px solid var(--pc-line);border-radius:var(--pc-r-sm);padding:8px 11px;
+    background:var(--pc-surface-2);font-size:var(--pc-fs-13);color:var(--pc-ink-2);
+    display:flex;align-items:center;justify-content:space-between;font-variant-numeric:tabular-nums}
+  .co-field.wide{grid-column:1 / -1}
+  .co-field .ph{color:var(--pc-muted)}
+  .co-pay{width:100%;height:46px;border-radius:var(--pc-r);background:var(--pc-accent);color:#fff;
+    display:flex;align-items:center;justify-content:center;gap:8px;font-weight:600;font-size:var(--pc-fs-15)}
+  .co-secure{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:var(--pc-s4);
+    font-size:var(--pc-fs-11);color:var(--pc-muted)}
+  .co-secure svg{width:13px;height:13px}
+
+  /* dashboard mockup */
+  .db-head{display:flex;align-items:center;gap:var(--pc-s3);margin-bottom:var(--pc-s5)}
+  .db-head .db-title{font-size:var(--pc-fs-15);font-weight:600}
+  .db-head .db-sub{font-size:var(--pc-fs-11);color:var(--pc-muted)}
+  .db-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--pc-s3);margin-bottom:var(--pc-s5)}
+  .db-stat{border:1px solid var(--pc-line);border-radius:var(--pc-r);padding:var(--pc-s3);background:var(--pc-surface)}
+  .db-stat .lbl{font-size:10px;color:var(--pc-muted);font-weight:600;line-height:1.3}
+  .db-stat .val{font-size:var(--pc-fs-18);font-weight:600;letter-spacing:-.02em;margin-top:4px;font-variant-numeric:tabular-nums}
+  .db-spark{margin-top:6px;height:22px;width:100%;display:block}
+  .db-delta{font-size:10px;font-weight:600}
+  .db-delta.up{color:var(--pc-success)}.db-delta.down{color:var(--pc-danger)}
+  .db-table{width:100%;border-collapse:collapse;font-size:var(--pc-fs-12)}
+  .db-table th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.05em;
+    color:var(--pc-muted);font-weight:600;padding:8px var(--pc-s3);border-bottom:1px solid var(--pc-line);background:var(--pc-surface-2)}
+  .db-table td{padding:9px var(--pc-s3);border-bottom:1px solid var(--pc-line-2);color:var(--pc-ink-2);vertical-align:middle}
+  .db-table tr:last-child td{border-bottom:0}
+  .db-table .pc-mono{font-family:var(--pc-font-mono);font-size:var(--pc-fs-11);color:var(--pc-ink)}
+  .db-table .amt{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;color:var(--pc-ink)}
+  .db-table-wrap{border:1px solid var(--pc-line);border-radius:var(--pc-r);overflow:hidden}
+
+  /* ------------------------------------------------------------- flow -- */
+  .lp-flow{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--pc-s5);position:relative}
+  .lp-flow-step{background:var(--pc-surface);border:1px solid var(--pc-line);border-radius:var(--pc-r-lg);
+    box-shadow:var(--pc-sh-1);padding:var(--pc-s6);position:relative}
+  .lp-flow-n{width:30px;height:30px;border-radius:50%;background:var(--pc-accent);color:#fff;font-weight:700;
+    font-size:var(--pc-fs-13);display:flex;align-items:center;justify-content:center;margin-bottom:var(--pc-s4)}
+  .lp-flow-step h3{font-size:var(--pc-fs-16);margin-bottom:6px}
+  .lp-flow-step p{font-size:var(--pc-fs-13);color:var(--pc-muted);margin:0;line-height:1.55}
+  .lp-flow-arrow{position:absolute;top:50%;right:-16px;transform:translateY(-50%);z-index:2;color:var(--pc-line);
+    width:24px;height:24px}
+  .lp-flow-arrow svg{width:24px;height:24px}
+
+  /* ---------------------------------------------------------- methods -- */
+  .lp-methods{display:grid;grid-template-columns:repeat(auto-fill,minmax(196px,1fr));gap:var(--pc-s3)}
   .lp-method-tile{
     display:flex;align-items:center;gap:var(--pc-s3);
     background:var(--pc-surface);border:1px solid var(--pc-line);border-radius:var(--pc-r);
-    padding:var(--pc-s4) var(--pc-s5);box-shadow:var(--pc-sh-1);min-width:180px;
+    padding:var(--pc-s4);box-shadow:var(--pc-sh-1);transition:box-shadow var(--pc-dur),transform var(--pc-dur),border-color var(--pc-dur);
   }
-  .lp-method-tile .mt-badge{
-    width:38px;height:38px;border-radius:var(--pc-r-sm);flex:none;
-    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:var(--pc-fs-12);
-    background:var(--pc-accent-bg);color:var(--pc-accent-ink);letter-spacing:-.02em;
+  .lp-method-tile:hover{box-shadow:var(--pc-sh-3);transform:translateY(-2px);border-color:#d7dce3}
+  .mt-badge{
+    width:44px;height:30px;border-radius:var(--pc-r-sm);flex:none;overflow:hidden;
+    display:flex;align-items:center;justify-content:center;
+    border:1px solid var(--pc-line);background:var(--pc-surface-2);
   }
+  .mt-badge svg{display:block}
+  .mt-mono{font-weight:800;font-size:var(--pc-fs-13);letter-spacing:-.02em}
   .lp-method-tile .mt-name{font-size:var(--pc-fs-14);font-weight:600}
   .lp-method-tile .mt-sub{font-size:var(--pc-fs-11);color:var(--pc-muted)}
 
-  /* pricing */
+  /* --------------------------------------------------------- pricing -- */
   .lp-pricing{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--pc-s5);align-items:stretch}
   .lp-tier{
     background:var(--pc-surface);border:1px solid var(--pc-line);border-radius:var(--pc-r-lg);
@@ -133,7 +254,7 @@
   .lp-tier li{display:flex;align-items:flex-start;gap:8px;font-size:var(--pc-fs-13);color:var(--pc-ink-2)}
   .lp-tier li svg{width:16px;height:16px;color:var(--pc-success);flex:none;margin-top:2px}
 
-  /* developers */
+  /* ------------------------------------------------------- developers -- */
   .lp-dev-grid{display:grid;grid-template-columns:1fr 1.15fr;gap:var(--pc-s10);align-items:center}
   .lp-code{
     background:#0f1729;border-radius:var(--pc-r-lg);box-shadow:var(--pc-sh-4);overflow:hidden;
@@ -162,20 +283,26 @@
   .lp-dev-list h4{font-size:var(--pc-fs-14)}
   .lp-dev-list p{font-size:var(--pc-fs-13);color:var(--pc-muted);margin:2px 0 0}
 
-  /* cta banner */
+  /* -------------------------------------------------------- cta banner -- */
   .lp-cta-banner{
+    position:relative;overflow:hidden;
     background:linear-gradient(135deg,var(--pc-accent),var(--pc-accent-active));
     border-radius:var(--pc-r-xl);padding:var(--pc-s12) var(--pc-s8);text-align:center;color:#fff;
     box-shadow:var(--pc-sh-3);
   }
+  .lp-cta-banner::before{content:"";position:absolute;inset:0;pointer-events:none;opacity:.4;
+    background-image:radial-gradient(rgba(255,255,255,.18) 1px, transparent 1px);background-size:22px 22px;
+    -webkit-mask-image:radial-gradient(600px 300px at 80% 0%, #000, transparent 70%);
+            mask-image:radial-gradient(600px 300px at 80% 0%, #000, transparent 70%)}
+  .lp-cta-banner>*{position:relative}
   .lp-cta-banner h2{color:#fff;font-size:var(--pc-fs-34);letter-spacing:-.02em;margin-bottom:var(--pc-s3)}
-  .lp-cta-banner p{color:rgba(255,255,255,.85);font-size:var(--pc-fs-16);max-width:520px;margin:0 auto var(--pc-s6)}
+  .lp-cta-banner p{color:rgba(255,255,255,.85);font-size:var(--pc-fs-16);max-width:540px;margin:0 auto var(--pc-s6)}
   .lp-btn-white{background:#fff;color:var(--pc-accent)}
   .lp-btn-white:hover{background:#eef4fb}
   .lp-btn-outline-white{background:transparent;color:#fff;border-color:rgba(255,255,255,.55)}
   .lp-btn-outline-white:hover{background:rgba(255,255,255,.12)}
 
-  /* footer */
+  /* ------------------------------------------------------------ footer -- */
   .lp-footer{background:var(--pc-surface);border-top:1px solid var(--pc-line);padding:var(--pc-s12) 0 var(--pc-s8)}
   .lp-footer-grid{display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;gap:var(--pc-s8);margin-bottom:var(--pc-s10)}
   .lp-footer-brand p{font-size:var(--pc-fs-13);color:var(--pc-muted);max-width:280px;margin:var(--pc-s3) 0 0}
@@ -189,16 +316,20 @@
   .lp-footer-bar .badges{display:flex;gap:var(--pc-s3);flex-wrap:wrap}
 
   @media (max-width:900px){
-    .lp-hero-grid,.lp-dev-grid{grid-template-columns:1fr}
-    .lp-features,.lp-pricing{grid-template-columns:1fr}
+    .lp-hero-grid,.lp-dev-grid,.lp-preview-grid{grid-template-columns:1fr}
+    .lp-features,.lp-pricing,.lp-flow{grid-template-columns:1fr}
+    .lp-flow-arrow{display:none}
     .lp-footer-grid{grid-template-columns:1fr 1fr}
     .lp-h1{font-size:34px}
     .lp-nav-links{display:none}
+    .lp-visual-stack{margin-top:var(--pc-s4)}
   }
   @media (max-width:560px){
     .lp-footer-grid{grid-template-columns:1fr}
     .lp-h1{font-size:28px}
     .lp-nav-right .hide-sm{display:none}
+    .db-stats{grid-template-columns:repeat(2,1fr)}
+    .co-fields{grid-template-columns:1fr}
   }
 </style>
 </head>
@@ -210,7 +341,9 @@
     <span data-pc-logo data-size="26"></span>
   </a>
   <nav class="lp-nav-links">
-    <a href="#products">ผลิตภัณฑ์</a>
+    <a href="#features">ผลิตภัณฑ์</a>
+    <a href="#preview">ตัวอย่างสินค้า</a>
+    <a href="#methods">ช่องทางจ่าย</a>
     <a href="#pricing">ราคา</a>
     <a href="#developers">เอกสาร (Docs)</a>
   </nav>
@@ -227,38 +360,44 @@
 <section class="lp-hero" id="products">
   <div class="lp-wrap">
     <div class="lp-hero-grid">
-      <div>
-        <span class="lp-eyebrow"><span class="dot"></span> Full-acquiring gateway · ประเทศไทย</span>
-        <h1 class="lp-h1">รับชำระด้วย<span class="hl">บัตร</span> และ<br><span class="hl">PromptPay / Thai QR</span><br>ในการเชื่อมต่อเดียว</h1>
+      <div data-reveal>
+        <span class="lp-eyebrow"><span class="dot"></span> Payment gateway สำหรับธุรกิจไทย</span>
+        <h1 class="lp-h1">รับชำระเงินออนไลน์<br>ด้วย<span class="hl">บัตร, PromptPay</span><br>และ<span class="hl">e-wallet</span> ครบในที่เดียว</h1>
         <p class="lp-sub">
-          PayCore ช่วยให้ธุรกิจไทยรับชำระเงินออนไลน์ได้ครบวงจร — บัตรเครดิต/เดบิตพร้อม 3DS 2.x,
-          PromptPay และ Thai QR, การกระทบยอด (settlement) และ webhooks แบบเรียลไทม์
-          พร้อมมาตรฐาน PCI-DSS Level 1 ที่สอดคล้องกับหลักเกณฑ์ ธปท.
+          สร้าง payment link แบบไม่ต้องเขียนโค้ด แล้วให้ลูกค้าจ่ายผ่านหน้า hosted checkout ที่รองรับ
+          บัตร 3DS 2.x, PromptPay/Thai QR และ e-wallet ยอดนิยม —
+          พร้อม dashboard, การคืนเงิน, webhooks และการกระทบยอด ในระบบเดียว
         </p>
         <div class="lp-cta">
           <a href="/login" class="pc-btn pc-btn-primary pc-btn-lg">เริ่มต้นใช้งานฟรี</a>
-          <a href="#developers" class="pc-btn pc-btn-secondary pc-btn-lg">ดูเอกสารสำหรับนักพัฒนา</a>
+          <a href="#preview" class="pc-btn pc-btn-secondary pc-btn-lg">ดูตัวอย่างสินค้า</a>
         </div>
-        <div class="lp-cta-note">ไม่มีค่าธรรมเนียมแรกเข้า · ทดสอบด้วย test mode ได้ทันที · เชื่อมต่อภายในไม่กี่นาที</div>
+        <div class="lp-cta-note">
+          <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> ไม่มีค่าธรรมเนียมแรกเข้า</span>
+          <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> ทดสอบด้วย test mode ได้ทันที</span>
+          <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> เชื่อมต่อในไม่กี่นาที</span>
+        </div>
       </div>
 
-      <!-- hero visual: a stylized payment card -->
-      <div class="lp-visual" aria-hidden="true">
-        <div class="lp-visual-head">
-          <span data-pc-logo data-size="24"></span>
-          <span class="pc-badge no-dot" data-status="captured">Captured</span>
-        </div>
-        <div class="pc-muted" style="font-size:13px">ยอดชำระ · Acme Store</div>
-        <div class="lp-visual-amt">฿1,290.00</div>
-        <div class="lp-visual-row"><span class="k">วิธีชำระ</span><span class="v">Visa •••• 4242</span></div>
-        <div class="lp-visual-row"><span class="k">3-D Secure</span><span class="v">ผ่านการยืนยัน</span></div>
-        <div class="lp-visual-row"><span class="k">ค่าธรรมเนียม</span><span class="v">฿37.41</span></div>
-        <div class="lp-visual-row"><span class="k">รับสุทธิ (net)</span><span class="v">฿1,252.59</span></div>
-        <div class="lp-method">
-          <span class="lp-chip">💳 บัตร</span>
-          <span class="lp-chip">📱 PromptPay</span>
-          <span class="lp-chip">🔳 Thai QR</span>
-          <span class="lp-chip">🔁 Webhooks</span>
+      <!-- hero visual: a stylized payment receipt with floating status pills -->
+      <div class="lp-visual-stack" data-reveal data-reveal-delay="1">
+        <div class="lp-visual" aria-hidden="true">
+          <div class="lp-visual-head">
+            <span data-pc-logo data-size="24"></span>
+            <span class="pc-badge no-dot" data-status="captured">Captured</span>
+          </div>
+          <div class="pc-muted" style="font-size:13px">ยอดชำระ · Acme Store</div>
+          <div class="lp-visual-amt">฿1,290.00</div>
+          <div class="lp-visual-row"><span class="k">วิธีชำระ</span><span class="v">Visa •••• 4242</span></div>
+          <div class="lp-visual-row"><span class="k">3-D Secure</span><span class="v">ผ่านการยืนยัน</span></div>
+          <div class="lp-visual-row"><span class="k">ค่าธรรมเนียม</span><span class="v">฿37.41</span></div>
+          <div class="lp-visual-row"><span class="k">รับสุทธิ (net)</span><span class="v">฿1,252.59</span></div>
+          <div class="lp-method">
+            <span class="lp-chip">💳 บัตร</span>
+            <span class="lp-chip">📱 PromptPay</span>
+            <span class="lp-chip">👛 e-wallet</span>
+            <span class="lp-chip">🔁 Webhooks</span>
+          </div>
         </div>
       </div>
     </div>
@@ -270,23 +409,23 @@
   <div class="lp-wrap lp-trust-inner">
     <span class="lp-trust-item">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>
-      PCI-DSS Level 1
+      PCI-DSS-conscious
     </span>
     <span class="lp-trust-item">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M2 12h20"/></svg>
-      สอดคล้องหลักเกณฑ์ ธปท.
+      ออกแบบสอดคล้องหลักเกณฑ์ ธปท.
     </span>
     <span class="lp-trust-item">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-      Tokenization Vault
+      Tokenization vault
     </span>
     <span class="lp-trust-item">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-      99.99% uptime
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.2-8.6"/><path d="M22 4 12 14.01l-3-3"/></svg>
+      Idempotency ในตัว
     </span>
     <span class="lp-trust-item">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z"/></svg>
-      THB · settlement รายวัน
+      สกุลเงิน THB
     </span>
   </div>
 </div>
@@ -294,78 +433,317 @@
 <!-- ===================================================== FEATURES -->
 <section class="lp-section" id="features">
   <div class="lp-wrap">
-    <div class="lp-head">
+    <div class="lp-head" data-reveal>
       <div class="kicker">ทุกอย่างที่ร้านค้าต้องการ</div>
       <h2>แพลตฟอร์มรับชำระเงินครบวงจร</h2>
-      <p>ตั้งแต่การรับเงินหน้าร้านออนไลน์ ไปจนถึงการกระทบยอดและการจ่ายเงินเข้าบัญชี — จัดการได้จากที่เดียว</p>
+      <p>ตั้งแต่การสร้างลิงก์รับเงิน ไปจนถึงหน้าจ่ายเงิน การคืนเงิน และการกระทบยอด — จัดการได้จากที่เดียว</p>
     </div>
 
     <div class="lp-features">
-      <div class="lp-feat">
+      <div class="lp-feat" data-reveal>
+        <div class="lp-feat-ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>
+        </div>
+        <h3>Payment Links แบบไม่ต้องเขียนโค้ด</h3>
+        <p>สร้างลิงก์รับเงินระบุยอด เลือกช่องทางที่รับ และตั้งเป็นใช้ครั้งเดียวหรือใช้ซ้ำได้ แล้วแชร์ URL ให้ลูกค้าจ่ายได้ทันที</p>
+        <span class="lp-tag">ไม่ต้องมีทีมพัฒนา</span>
+      </div>
+
+      <div class="lp-feat" data-reveal data-reveal-delay="1">
+        <div class="lp-feat-ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/><path d="M7 14h5"/></svg>
+        </div>
+        <h3>Hosted Checkout สำเร็จรูป</h3>
+        <p>หน้าชำระเงินที่โฮสต์ให้พร้อมใช้ ปรับแบรนด์ร้านได้ ลูกค้าเลือกช่องทางเองและระบบติดตามสถานะจนจ่ายสำเร็จ</p>
+        <span class="lp-tag">หลายช่องทางในหน้าเดียว</span>
+      </div>
+
+      <div class="lp-feat" data-reveal data-reveal-delay="2">
         <div class="lp-feat-ico">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
         </div>
         <h3>บัตร &amp; 3DS 2.x</h3>
-        <p>รับ Visa / Mastercard / JCB พร้อม 3-D Secure 2.x, capture / refund / void และ dispute แบบครบวงจร ลดการปฏิเสธรายการ (declines) และภาระ chargeback</p>
+        <p>รับ Visa / Mastercard / JCB พร้อม 3-D Secure 2.x และรองรับ authorize / capture / refund / void รวมถึงการจัดการข้อพิพาท (dispute/chargeback)</p>
       </div>
 
-      <div class="lp-feat">
+      <div class="lp-feat" data-reveal>
         <div class="lp-feat-ico">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3M21 21v.01M17 21h.01M21 17h.01"/></svg>
         </div>
         <h3>PromptPay / Thai QR</h3>
-        <p>สร้าง QR รับเงินตามมาตรฐาน EMVCo/Thai QR แบบไดนามิก ตรวจสอบสถานะการชำระเรียลไทม์ และรองรับ webhook ยืนยันการโอน</p>
+        <p>สร้าง QR รับเงินตามมาตรฐาน EMVCo/Thai QR แบบไดนามิก ตรวจสอบสถานะการชำระเรียลไทม์ พร้อม webhook ยืนยันการโอน</p>
       </div>
 
-      <div class="lp-feat">
+      <div class="lp-feat" data-reveal data-reveal-delay="1">
+        <div class="lp-feat-ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 9V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"/><path d="M21 12v-1a2 2 0 0 0-2-2h-3a2 2 0 1 0 0 4h3a2 2 0 0 0 2-1Z"/></svg>
+        </div>
+        <h3>E-wallet &amp; mobile banking</h3>
+        <p>รองรับ TrueMoney, ShopeePay, Alipay, WeChat Pay, mobile banking และการผ่อนชำระผ่านบัตร ครอบคลุมช่องทางที่คนไทยใช้จริง</p>
+      </div>
+
+      <div class="lp-feat" data-reveal data-reveal-delay="2">
+        <div class="lp-feat-ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+        </div>
+        <h3>Dashboard &amp; การคืนเงิน</h3>
+        <p>ติดตามยอดรับชำระ จำนวนธุรกรรม อัตราสำเร็จและอัตราคืนเงิน ดูรายละเอียดแต่ละรายการ และคืนเงินได้ทั้งเต็มจำนวนหรือบางส่วน</p>
+      </div>
+
+      <div class="lp-feat" data-reveal>
+        <div class="lp-feat-ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 8-8V2l4 4-4 4V8a4 4 0 0 0-4 4Zm16 0a8 8 0 0 1-8 8v2l-4-4 4-4v2a4 4 0 0 0 4-4Z"/></svg>
+        </div>
+        <h3>Webhooks &amp; idempotency</h3>
+        <p>รับเหตุการณ์การชำระเงินผ่าน webhook ที่ลงลายเซ็นด้วย signing secret (หมุนคีย์ได้) และส่ง Idempotency-Key เพื่อกันการเรียกเก็บซ้ำ</p>
+      </div>
+
+      <div class="lp-feat" data-reveal data-reveal-delay="1">
         <div class="lp-feat-ico">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>
         </div>
         <h3>Settlement &amp; การกระทบยอด</h3>
-        <p>ดูรายการจ่ายเงิน (payouts) เข้าบัญชี พร้อมรายละเอียดค่าธรรมเนียมและยอดสุทธิ กระทบยอดได้ครบทุกธุรกรรมแบบโปร่งใส</p>
+        <p>ดูรายการจ่ายเงินเข้าบัญชี พร้อมรายละเอียดค่าธรรมเนียมและยอดสุทธิ ทุกธุรกรรมบันทึกในบัญชีแยกประเภทแบบ append-only กระทบยอดได้โปร่งใส</p>
       </div>
 
-      <div class="lp-feat">
-        <div class="lp-feat-ico">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 8-8V2l4 4-4 4V8a4 4 0 0 0-4 4Zm16 0a8 8 0 0 1-8 8v2l-4-4 4-4v2a4 4 0 0 0 4-4Z"/></svg>
-        </div>
-        <h3>Webhooks แบบลงลายเซ็น</h3>
-        <p>รับเหตุการณ์การชำระเงินแบบเรียลไทม์ผ่าน webhook ที่มี signing secret หมุนคีย์ได้ ตรวจสอบความถูกต้องของ payload ได้ทุกครั้ง</p>
-      </div>
-
-      <div class="lp-feat">
-        <div class="lp-feat-ico">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-        </div>
-        <h3>Dashboard สำหรับร้านค้า</h3>
-        <p>ติดตาม KPI ยอดขาย อัตราสำเร็จ (success rate), refund ratio และ chargeback จัดการข้อพิพาท คีย์ API และ webhook ได้จากหน้าเดียว</p>
-      </div>
-
-      <div class="lp-feat">
+      <div class="lp-feat" data-reveal data-reveal-delay="2">
         <div class="lp-feat-ico">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="M9 12l2 2 4-4"/></svg>
         </div>
-        <h3>PCI-DSS L1 / สอดคล้อง ธปท.</h3>
-        <p>ไม่จัดเก็บ PAN เต็มในระบบร้านค้า ข้อมูลบัตรถูกแทนที่ด้วย token ในโทเคนไนเซชันวอลต์ ออกแบบให้สอดคล้องกับหลักเกณฑ์กำกับดูแลของไทย</p>
+        <h3>Tokenization &amp; PCI</h3>
+        <p>ไม่จัดเก็บ PAN เต็มในระบบร้านค้า ข้อมูลบัตรถูกแทนที่ด้วย token ใน tokenization vault ออกแบบตามแนวทาง PCI-DSS และหลักเกณฑ์กำกับดูแลของไทย</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================================================== PRODUCT PREVIEW -->
+<section class="lp-section alt" id="preview">
+  <div class="lp-wrap">
+    <div class="lp-head" data-reveal>
+      <div class="kicker">ดูของจริง</div>
+      <h2>สินค้าที่ลูกค้าและร้านค้าได้ใช้จริง</h2>
+      <p>หน้า hosted checkout ที่ลูกค้าเห็นตอนจ่ายเงิน และ dashboard ที่ร้านค้าใช้ติดตามธุรกรรมและคืนเงิน</p>
+    </div>
+
+    <div class="lp-preview-grid">
+      <!-- Hosted checkout mockup -->
+      <div class="lp-frame" data-reveal aria-label="ตัวอย่างหน้า hosted checkout">
+        <div class="lp-frame-bar" aria-hidden="true">
+          <span class="d r"></span><span class="d y"></span><span class="d g"></span>
+          <span class="lp-frame-url">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+            app.paycore.co.th/pay/lnk_8fQ2
+          </span>
+        </div>
+        <div class="lp-frame-body">
+          <div class="co-head">
+            <div class="co-logo">A</div>
+            <div class="co-merch">Acme Store<small>คำสั่งซื้อ #1042</small></div>
+            <span class="pc-badge no-dot" data-status="pending" style="margin-left:auto">TEST MODE</span>
+          </div>
+
+          <div class="co-amt">
+            <div class="lbl">ยอดที่ต้องชำระ</div>
+            <div class="val">฿1,290.00</div>
+          </div>
+
+          <div class="co-methods">
+            <div class="co-m sel">
+              <span class="co-radio"></span>
+              <span class="co-mname">บัตรเครดิต / เดบิต</span>
+              <span class="mt-badge" style="width:36px;height:24px"><svg viewBox="0 0 40 24" width="34" height="20" aria-hidden="true"><circle cx="16" cy="12" r="9" fill="#EB001B"/><circle cx="24" cy="12" r="9" fill="#F79E1B" opacity=".85"/></svg></span>
+            </div>
+            <div class="co-m">
+              <span class="co-radio"></span>
+              <span class="co-mname">PromptPay</span>
+              <span class="mt-mono" style="color:#1a4b8f">PromptPay</span>
+            </div>
+            <div class="co-m">
+              <span class="co-radio"></span>
+              <span class="co-mname">TrueMoney Wallet</span>
+              <span class="mt-mono" style="color:#e8792b">TrueMoney</span>
+            </div>
+          </div>
+
+          <div class="co-fields" aria-hidden="true">
+            <div class="co-field wide"><span class="ph">หมายเลขบัตร</span><span>4242 4242 4242 4242</span></div>
+            <div class="co-field"><span class="ph">MM / YY</span><span>12 / 28</span></div>
+            <div class="co-field"><span class="ph">CVC</span><span>•••</span></div>
+          </div>
+
+          <div class="co-pay">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+            ชำระเงิน ฿1,290.00
+          </div>
+          <div class="co-secure">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+            ชำระเงินอย่างปลอดภัยด้วย 3-D Secure · ข้อมูลบัตรผ่าน tokenization vault
+          </div>
+        </div>
+        <div class="lp-frame-cap">Hosted checkout — หน้า <code class="pc-code">/pay/&lt;id&gt;</code> ที่ลูกค้าเห็น <span class="pc-badge no-dot" data-status="captured">Customer view</span></div>
+      </div>
+
+      <!-- Dashboard mockup -->
+      <div class="lp-frame" data-reveal data-reveal-delay="1" aria-label="ตัวอย่างหน้า dashboard ร้านค้า">
+        <div class="lp-frame-bar" aria-hidden="true">
+          <span class="d r"></span><span class="d y"></span><span class="d g"></span>
+          <span class="lp-frame-url">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+            app.paycore.co.th/dashboard
+          </span>
+        </div>
+        <div class="lp-frame-body">
+          <div class="db-head">
+            <span data-pc-logo data-size="22"></span>
+            <div>
+              <div class="db-title">ภาพรวมร้านค้า</div>
+              <div class="db-sub">Acme Store · 30 วันล่าสุด</div>
+            </div>
+            <span class="pc-badge no-dot" data-status="captured" style="margin-left:auto">Live</span>
+          </div>
+
+          <div class="db-stats">
+            <div class="db-stat">
+              <div class="lbl">ยอดรับชำระ (30 วัน)</div>
+              <div class="val">฿428K</div>
+              <svg class="db-spark" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true">
+                <defs><linearGradient id="spk1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#185fa5" stop-opacity=".28"/><stop offset="1" stop-color="#185fa5" stop-opacity="0"/></linearGradient></defs>
+                <path d="M0,20 L14,17 L28,18 L42,12 L56,14 L70,8 L84,9 L100,4 L100,24 L0,24 Z" fill="url(#spk1)"/>
+                <path d="M0,20 L14,17 L28,18 L42,12 L56,14 L70,8 L84,9 L100,4" fill="none" stroke="#185fa5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span class="db-delta up">▲ 12.4%</span>
+            </div>
+            <div class="db-stat">
+              <div class="lbl">จำนวนธุรกรรม</div>
+              <div class="val">1,284</div>
+              <svg class="db-spark" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true">
+                <path d="M0,18 L14,16 L28,19 L42,13 L56,15 L70,11 L84,12 L100,7" fill="none" stroke="#0f6e56" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span class="db-delta up">▲ 8.1%</span>
+            </div>
+            <div class="db-stat">
+              <div class="lbl">อัตราสำเร็จ</div>
+              <div class="val">96.7%</div>
+              <svg class="db-spark" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true">
+                <path d="M0,10 L14,9 L28,11 L42,8 L56,9 L70,7 L84,8 L100,6" fill="none" stroke="#0f6e56" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span class="db-delta up">▲ 0.6%</span>
+            </div>
+            <div class="db-stat">
+              <div class="lbl">อัตราคืนเงิน</div>
+              <div class="val">1.2%</div>
+              <svg class="db-spark" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true">
+                <path d="M0,8 L14,10 L28,9 L42,12 L56,11 L70,13 L84,14 L100,15" fill="none" stroke="#a32d2d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span class="db-delta down">▼ 0.3%</span>
+            </div>
+          </div>
+
+          <div class="db-table-wrap">
+            <table class="db-table">
+              <thead>
+                <tr><th>ธุรกรรม</th><th>ช่องทาง</th><th>สถานะ</th><th style="text-align:right">ยอด</th></tr>
+              </thead>
+              <tbody>
+                <tr><td class="pc-mono">pay_9Kb2…</td><td>Visa •••• 4242</td><td><span class="pc-badge" data-status="captured">Captured</span></td><td class="amt">฿1,290.00</td></tr>
+                <tr><td class="pc-mono">pay_7Ha1…</td><td>PromptPay</td><td><span class="pc-badge" data-status="captured">Captured</span></td><td class="amt">฿540.00</td></tr>
+                <tr><td class="pc-mono">pay_5Gd8…</td><td>TrueMoney</td><td><span class="pc-badge" data-status="pending">Pending</span></td><td class="amt">฿230.00</td></tr>
+                <tr><td class="pc-mono">pay_3Rc4…</td><td>ShopeePay</td><td><span class="pc-badge" data-status="refunded">Refunded</span></td><td class="amt">฿860.00</td></tr>
+                <tr><td class="pc-mono">pay_2Zx0…</td><td>Mastercard •••• 5100</td><td><span class="pc-badge" data-status="failed">Failed</span></td><td class="amt">฿1,750.00</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="lp-frame-cap">Merchant dashboard — สถิติ, ธุรกรรม และการคืนเงิน <span class="pc-badge no-dot" data-status="authorized">Merchant view</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================================================== HOW IT WORKS -->
+<section class="lp-section">
+  <div class="lp-wrap">
+    <div class="lp-head" data-reveal>
+      <div class="kicker">เริ่มรับเงินใน 3 ขั้นตอน</div>
+      <h2>จากลิงก์ ถึงหน้าจ่าย ถึง dashboard</h2>
+      <p>ไม่ต้องต่อระบบซับซ้อน — สร้างลิงก์ แชร์ให้ลูกค้า แล้วดูเงินเข้าในที่เดียว</p>
+    </div>
+    <div class="lp-flow">
+      <div class="lp-flow-step" data-reveal>
+        <div class="lp-flow-n">1</div>
+        <h3>สร้าง payment link</h3>
+        <p>ระบุยอด เลือกช่องทางที่รับ และตั้งเป็นใช้ครั้งเดียวหรือใช้ซ้ำ ใน dashboard — ไม่ต้องเขียนโค้ด</p>
+        <span class="lp-flow-arrow" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      </div>
+      <div class="lp-flow-step" data-reveal data-reveal-delay="1">
+        <div class="lp-flow-n">2</div>
+        <h3>ลูกค้าจ่ายผ่าน checkout</h3>
+        <p>แชร์ URL ให้ลูกค้า เขาเลือกจ่ายด้วยบัตร, PromptPay หรือ e-wallet บนหน้า hosted checkout ของ PayCore</p>
+        <span class="lp-flow-arrow" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      </div>
+      <div class="lp-flow-step" data-reveal data-reveal-delay="2">
+        <div class="lp-flow-n">3</div>
+        <h3>ดูเงินเข้าใน dashboard</h3>
+        <p>ธุรกรรมขึ้นทันทีพร้อม webhook แจ้งเตือน ติดตามยอด คืนเงิน และกระทบยอด settlement ได้จากที่เดียว</p>
       </div>
     </div>
   </div>
 </section>
 
 <!-- ================================================ SUPPORTED METHODS -->
-<section class="lp-section alt">
+<section class="lp-section alt" id="methods">
   <div class="lp-wrap">
-    <div class="lp-head">
+    <div class="lp-head" data-reveal>
       <div class="kicker">ช่องทางการชำระเงิน</div>
       <h2>รองรับวิธีชำระที่คนไทยใช้จริง</h2>
-      <p>ครอบคลุมทั้งบัตรระหว่างประเทศและช่องทางโลคอลที่ลูกค้าคุ้นเคย</p>
+      <p>ครอบคลุมทั้งบัตรระหว่างประเทศ, PromptPay/Thai QR และ e-wallet ยอดนิยม (ช่องทาง e-wallet ทำงานผ่าน sandbox adapter ในโหมดทดสอบ)</p>
     </div>
     <div class="lp-methods">
-      <div class="lp-method-tile"><div class="mt-badge">VISA</div><div><div class="mt-name">Visa</div><div class="mt-sub">เครดิต / เดบิต · 3DS 2.x</div></div></div>
-      <div class="lp-method-tile"><div class="mt-badge">MC</div><div><div class="mt-name">Mastercard</div><div class="mt-sub">เครดิต / เดบิต · 3DS 2.x</div></div></div>
-      <div class="lp-method-tile"><div class="mt-badge">JCB</div><div><div class="mt-name">JCB</div><div class="mt-sub">เครดิต · 3DS 2.x</div></div></div>
-      <div class="lp-method-tile"><div class="mt-badge">PP</div><div><div class="mt-name">PromptPay</div><div class="mt-sub">พร้อมเพย์ · เรียลไทม์</div></div></div>
-      <div class="lp-method-tile"><div class="mt-badge">QR</div><div><div class="mt-name">Thai QR</div><div class="mt-sub">EMVCo · ไดนามิก</div></div></div>
+      <div class="lp-method-tile" data-reveal>
+        <span class="mt-badge"><span class="mt-mono" style="font-style:italic;color:#1a1f71">VISA</span></span>
+        <div><div class="mt-name">Visa</div><div class="mt-sub">เครดิต / เดบิต · 3DS 2.x</div></div>
+      </div>
+      <div class="lp-method-tile" data-reveal>
+        <span class="mt-badge"><svg viewBox="0 0 40 24" width="34" height="20" aria-hidden="true"><circle cx="16" cy="12" r="9" fill="#EB001B"/><circle cx="24" cy="12" r="9" fill="#F79E1B" opacity=".85"/></svg></span>
+        <div><div class="mt-name">Mastercard</div><div class="mt-sub">เครดิต / เดบิต · 3DS 2.x</div></div>
+      </div>
+      <div class="lp-method-tile" data-reveal>
+        <span class="mt-badge"><svg viewBox="0 0 40 24" width="34" height="20" aria-hidden="true"><rect x="4" y="4" width="9" height="16" rx="2" fill="#0b4ea2"/><rect x="15.5" y="4" width="9" height="16" rx="2" fill="#d31245"/><rect x="27" y="4" width="9" height="16" rx="2" fill="#00a650"/></svg></span>
+        <div><div class="mt-name">JCB</div><div class="mt-sub">เครดิต · 3DS 2.x</div></div>
+      </div>
+      <div class="lp-method-tile" data-reveal>
+        <span class="mt-badge" style="background:#eaf1fb"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.4" fill="#1a4b8f"/><rect x="14" y="3" width="7" height="7" rx="1.4" fill="#0f9d8c"/><rect x="3" y="14" width="7" height="7" rx="1.4" fill="#0f9d8c"/><rect x="14" y="14" width="3" height="3" rx=".6" fill="#1a4b8f"/><rect x="18" y="14" width="3" height="3" rx=".6" fill="#1a4b8f"/><rect x="14" y="18" width="3" height="3" rx=".6" fill="#1a4b8f"/><rect x="18" y="18" width="3" height="3" rx=".6" fill="#0f9d8c"/></svg></span>
+        <div><div class="mt-name">PromptPay</div><div class="mt-sub">พร้อมเพย์ · เรียลไทม์</div></div>
+      </div>
+      <div class="lp-method-tile" data-reveal>
+        <span class="mt-badge"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><g fill="#0f1729"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/></g><rect x="5" y="5" width="4" height="4" fill="#fff"/><rect x="15" y="5" width="4" height="4" fill="#fff"/><rect x="5" y="15" width="4" height="4" fill="#fff"/><rect x="14" y="14" width="3" height="3" fill="#0f1729"/><rect x="18" y="18" width="3" height="3" fill="#0f1729"/></svg></span>
+        <div><div class="mt-name">Thai QR</div><div class="mt-sub">EMVCo · ไดนามิก</div></div>
+      </div>
+      <div class="lp-method-tile" data-reveal>
+        <span class="mt-badge" style="background:#fff2e6"><span class="mt-mono" style="color:#f47b20">true</span></span>
+        <div><div class="mt-name">TrueMoney</div><div class="mt-sub">e-wallet · sandbox</div></div>
+      </div>
+      <div class="lp-method-tile" data-reveal>
+        <span class="mt-badge" style="background:#fff0e9"><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true" fill="none" stroke="#ee4d2d" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8h12l-1 11a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 8Z"/><path d="M9 8a3 3 0 0 1 6 0"/></svg></span>
+        <div><div class="mt-name">ShopeePay</div><div class="mt-sub">e-wallet · sandbox</div></div>
+      </div>
+      <div class="lp-method-tile" data-reveal>
+        <span class="mt-badge" style="background:#e8f1ff"><span class="mt-mono" style="color:#1677ff;font-size:15px">支</span></span>
+        <div><div class="mt-name">Alipay</div><div class="mt-sub">e-wallet · sandbox</div></div>
+      </div>
+      <div class="lp-method-tile" data-reveal>
+        <span class="mt-badge" style="background:#e7f7ec"><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true" fill="#09b83e"><path d="M9 4C5.1 4 2 6.6 2 9.9c0 1.9 1.1 3.6 2.8 4.7L4 17l2.6-1.3c.8.2 1.6.3 2.4.3h.6a4.7 4.7 0 0 1-.2-1.4c0-2.9 2.8-5.2 6.4-5.2h.5C15.9 6.1 12.8 4 9 4Z"/><path d="M22 14.3c0-2.5-2.5-4.5-5.6-4.5s-5.6 2-5.6 4.5 2.5 4.5 5.6 4.5c.7 0 1.3-.1 1.9-.3l2 1-.6-1.7c1.4-.8 2.3-2.1 2.3-3.5Z"/></svg></span>
+        <div><div class="mt-name">WeChat Pay</div><div class="mt-sub">e-wallet · sandbox</div></div>
+      </div>
+      <div class="lp-method-tile" data-reveal>
+        <span class="mt-badge" style="background:#eef1f5"><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true" fill="none" stroke="#374151" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10 12 4l9 6"/><path d="M5 10v8M19 10v8M9 10v8M15 10v8"/><path d="M3 21h18"/></svg></span>
+        <div><div class="mt-name">Mobile banking</div><div class="mt-sub">redirect · sandbox</div></div>
+      </div>
+      <div class="lp-method-tile" data-reveal>
+        <span class="mt-badge" style="background:#eef1f5"><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true" fill="none" stroke="#374151" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v16"/></svg></span>
+        <div><div class="mt-name">ผ่อนชำระบัตร</div><div class="mt-sub">installment · sandbox</div></div>
+      </div>
     </div>
   </div>
 </section>
@@ -373,27 +751,27 @@
 <!-- ===================================================== PRICING -->
 <section class="lp-section" id="pricing">
   <div class="lp-wrap">
-    <div class="lp-head">
+    <div class="lp-head" data-reveal>
       <div class="kicker">ราคาโปร่งใส</div>
       <h2>จ่ายตามที่ใช้จริง ไม่มีค่าซ่อนเร้น</h2>
       <p>ไม่มีค่าแรกเข้า ไม่มีค่ารายเดือนสำหรับแพ็กเริ่มต้น จ่ายเฉพาะเมื่อรับเงินได้สำเร็จ</p>
     </div>
 
     <div class="lp-pricing">
-      <div class="lp-tier">
+      <div class="lp-tier" data-reveal>
         <h3>Starter</h3>
         <div class="tier-desc">สำหรับธุรกิจที่เพิ่งเริ่มรับชำระออนไลน์</div>
         <div class="tier-price"><span class="num">2.95%</span><span class="unit">+ ฿5 / รายการบัตร</span></div>
         <ul>
-          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> รับบัตร &amp; 3DS 2.x</li>
-          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> PromptPay / Thai QR</li>
-          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Dashboard &amp; webhooks</li>
-          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Settlement รายวัน</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Payment links &amp; hosted checkout</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> บัตร 3DS 2.x, PromptPay &amp; e-wallet</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Dashboard, refund &amp; webhooks</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Settlement &amp; การกระทบยอด</li>
         </ul>
         <a href="/login" class="pc-btn pc-btn-secondary pc-btn-block">เริ่มต้นใช้งาน</a>
       </div>
 
-      <div class="lp-tier featured">
+      <div class="lp-tier featured" data-reveal data-reveal-delay="1">
         <h3>Growth</h3>
         <div class="tier-desc">สำหรับธุรกิจที่กำลังเติบโตและมีปริมาณธุรกรรมสูง</div>
         <div class="tier-price"><span class="num">2.45%</span><span class="unit">+ ฿4 / รายการบัตร</span></div>
@@ -401,12 +779,12 @@
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> ทุกอย่างใน Starter</li>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> ค่าธรรมเนียม PromptPay ที่ต่ำลง</li>
           <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> การจัดการข้อพิพาทขั้นสูง</li>
-          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> รายงาน KPI แบบละเอียด</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> รายงานสถิติแบบละเอียด</li>
         </ul>
         <a href="/login" class="pc-btn pc-btn-primary pc-btn-block">เริ่มต้นใช้งาน</a>
       </div>
 
-      <div class="lp-tier">
+      <div class="lp-tier" data-reveal data-reveal-delay="2">
         <h3>Enterprise</h3>
         <div class="tier-desc">สำหรับองค์กรที่ต้องการปริมาณสูงและข้อตกลงเฉพาะ</div>
         <div class="tier-price"><span class="num">ติดต่อเรา</span></div>
@@ -426,10 +804,10 @@
 <section class="lp-section alt" id="developers">
   <div class="lp-wrap">
     <div class="lp-dev-grid">
-      <div>
+      <div data-reveal>
         <div class="kicker" style="color:var(--pc-accent);font-size:var(--pc-fs-12);font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:var(--pc-s3)">สำหรับนักพัฒนา</div>
         <h2 style="font-size:var(--pc-fs-34);letter-spacing:-.02em;margin-bottom:var(--pc-s3)">API ที่เข้าใจง่าย เริ่มรับเงินได้ในไม่กี่บรรทัด</h2>
-        <p style="font-size:var(--pc-fs-16);color:var(--pc-ink-2)">REST API สะอาด ตอบกลับด้วย envelope มาตรฐาน รองรับ idempotency key และ money เป็นหน่วยสตางค์ (satang) เพื่อความแม่นยำ</p>
+        <p style="font-size:var(--pc-fs-16);color:var(--pc-ink-2)">REST API สะอาด ตอบกลับด้วย envelope มาตรฐาน รองรับ idempotency key และคิดเงินเป็นหน่วยสตางค์ (satang) แบบ integer เพื่อความแม่นยำ</p>
         <div class="lp-dev-list">
           <div class="d-item">
             <div class="d-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg></div>
@@ -446,7 +824,7 @@
         </div>
       </div>
 
-      <div class="lp-code" role="img" aria-label="ตัวอย่าง curl สร้างรายการชำระเงิน">
+      <div class="lp-code" role="img" aria-label="ตัวอย่าง curl สร้างรายการชำระเงิน" data-reveal data-reveal-delay="1">
         <div class="lp-code-head">
           <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
           <span class="fn">create-payment.sh</span>
@@ -474,9 +852,9 @@
 <!-- ================================================== CTA BANNER -->
 <section class="lp-section">
   <div class="lp-wrap">
-    <div class="lp-cta-banner">
+    <div class="lp-cta-banner" data-reveal>
       <h2>พร้อมเริ่มรับชำระเงินแล้วหรือยัง?</h2>
-      <p>สมัครและทดสอบด้วย test mode ได้ทันที ไม่มีค่าใช้จ่าย เชื่อมต่อ API หรือใช้หน้า checkout สำเร็จรูปของเรา</p>
+      <p>สมัครและทดสอบด้วย test mode ได้ทันที ไม่มีค่าใช้จ่าย สร้าง payment link หรือเชื่อมต่อ API เพื่อรับเงินได้เลย</p>
       <div class="lp-cta" style="justify-content:center">
         <a href="/login" class="pc-btn lp-btn-white pc-btn-lg">เริ่มต้นใช้งานฟรี</a>
         <a href="#developers" class="pc-btn lp-btn-outline-white pc-btn-lg">อ่านเอกสาร</a>
@@ -493,24 +871,23 @@
     <div class="lp-footer-grid">
       <div class="lp-footer-brand">
         <span data-pc-logo data-size="26"></span>
-        <p>Payment gateway แบบ full-acquiring สำหรับธุรกิจไทย — รับบัตร, PromptPay และ Thai QR ด้วยมาตรฐานความปลอดภัยระดับสากล</p>
+        <p>Payment gateway สำหรับธุรกิจไทย — payment links, hosted checkout, บัตร, PromptPay และ e-wallet ด้วยมาตรฐานความปลอดภัยระดับสากล</p>
       </div>
       <div class="lp-footer-col">
         <h5>ผลิตภัณฑ์</h5>
-        <a href="#products">รับชำระด้วยบัตร</a>
-        <a href="#products">PromptPay / Thai QR</a>
-        <a href="#features">Settlement</a>
-        <a href="#features">Webhooks</a>
+        <a href="#features">Payment links</a>
+        <a href="#preview">Hosted checkout</a>
+        <a href="#methods">ช่องทางการจ่าย</a>
+        <a href="#features">Settlement &amp; webhooks</a>
         <a href="/dashboard">Dashboard ร้านค้า</a>
       </div>
       <div class="lp-footer-col">
         <h5>นักพัฒนา</h5>
         <a href="#developers">เอกสาร API</a>
         <a href="#developers">ตัวอย่างโค้ด</a>
-        <a href="/login">หน้า Checkout <span class="pc-badge no-dot" data-status="pending" style="margin-left:6px">TEST MODE</span></a>
-        <a href="/login">ทดลองจ่ายเงิน (Sandbox demo) — จ่าย QR ด้วยแอปธนาคารจำลอง (Sandbox Bank)</a>
-        <a href="/login">สมัครทดสอบ (Sandbox)</a>
-        <a href="#developers">Webhooks reference</a>
+        <a href="#developers">Webhooks &amp; idempotency</a>
+        <a href="/login">ทดลองใน sandbox <span class="pc-badge no-dot" data-status="pending" style="margin-left:6px">TEST MODE</span></a>
+        <a href="/login">เข้าสู่ระบบ / สมัคร</a>
       </div>
       <div class="lp-footer-col">
         <h5>บริษัท &amp; การกำกับดูแล</h5>
@@ -524,7 +901,7 @@
     <div class="lp-footer-bar">
       <span>© 2026 PayCore. สงวนลิขสิทธิ์.</span>
       <div class="badges">
-        <span class="pc-pill">PCI-DSS Level 1</span>
+        <span class="pc-pill">PCI-DSS-conscious</span>
         <span class="pc-pill">สอดคล้อง ธปท.</span>
         <span class="pc-pill">THB</span>
       </div>
@@ -533,5 +910,23 @@
 </footer>
 
 <script src="/assets/paycore.js" defer></script>
+<script>
+  /* tasteful scroll reveal — self-contained, respects reduced motion */
+  (function () {
+    var root = document.documentElement;
+    var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    var els = document.querySelectorAll("[data-reveal]");
+    if (reduce || !("IntersectionObserver" in window)) {
+      els.forEach(function (el) { el.classList.add("in"); });
+      return;
+    }
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (en.isIntersecting) { en.target.classList.add("in"); io.unobserve(en.target); }
+      });
+    }, { threshold: 0.12, rootMargin: "0px 0px -8% 0px" });
+    els.forEach(function (el) { io.observe(el); });
+  })();
+</script>
 </body>
 </html>
