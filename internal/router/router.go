@@ -12,8 +12,10 @@ import (
 // merchant onboarding stay open. sessionAuth is the dashboard human-login
 // session middleware (pc_session cookie) gating GET /v1/auth/me; it has no
 // effect unless h.Auth is wired. merchantAuth is the combined session-cookie-OR-
-// API-key middleware gating /v1/payment-links; it has no effect unless
-// h.PaymentLink is wired. adminAuth gates the /v1/admin operator console
+// API-key middleware gating the merchant dashboard routes (/v1/me, /v1/stats,
+// /v1/settlements, /v1/disputes), /v1/payment-links (no effect unless
+// h.PaymentLink is wired), and the read/refund /v1/payments routes. adminAuth
+// gates the /v1/admin operator console
 // (X-Admin-Key, constant-time compare). rateLimit is a per-merchant limiter
 // mounted on the money route groups only (nil disables it). metrics, when
 // non-nil, is mounted at /metrics on the public listener — pass nil to keep it
@@ -52,14 +54,17 @@ func Setup(app *fiber.App, h *handler.Handlers, auth, sessionAuth, merchantAuth,
 	}
 	v1.Get("/merchants/:id", auth, h.Merchant.Get)
 
-	// Merchant Dashboard (self-service). Everything resolves the merchant from
-	// the API-key auth context; the request body is never trusted for identity.
-	v1.Get("/me", auth, h.Merchant.Me)
-	v1.Post("/me/rotate-key", auth, h.Merchant.RotateKey)
-	v1.Put("/me/webhook", auth, h.Merchant.SetWebhook)
-	v1.Get("/stats", auth, h.Merchant.Stats)
-	v1.Get("/settlements", auth, h.Merchant.Settlements)
-	v1.Get("/disputes", auth, h.Dispute.ListByMerchant)
+	// Merchant Dashboard (self-service). Retrofitted to merchantAuth so BOTH the
+	// cookie dashboard and API-key clients reach these merchant-scoped routes.
+	// merchantAuth sets LocalMerchantID identically to auth, so the handlers are
+	// unchanged. Everything resolves the merchant from the auth context; the
+	// request body is never trusted for identity.
+	v1.Get("/me", merchantAuth, h.Merchant.Me)
+	v1.Post("/me/rotate-key", merchantAuth, h.Merchant.RotateKey)
+	v1.Put("/me/webhook", merchantAuth, h.Merchant.SetWebhook)
+	v1.Get("/stats", merchantAuth, h.Merchant.Stats)
+	v1.Get("/settlements", merchantAuth, h.Merchant.Settlements)
+	v1.Get("/disputes", merchantAuth, h.Dispute.ListByMerchant)
 
 	// Dashboard human auth (Google OIDC + session cookie). Public except /me.
 	if h.Auth != nil {
@@ -102,24 +107,33 @@ func Setup(app *fiber.App, h *handler.Handlers, auth, sessionAuth, merchantAuth,
 		}
 	}
 
-	// Payments require merchant API-key auth. The resolved merchant scopes every
-	// request. The rate limiter is mounted AFTER auth so it keys per merchant.
-	payments := v1.Group("/payments", auth)
+	// Payments — read + refund routes accept a session cookie OR an API key so
+	// the cookie dashboard can list/inspect/refund. The rate limiter is mounted
+	// AFTER auth so it keys per merchant (merchantAuth sets LocalMerchantID just
+	// like auth). Refund is money-moving: it keeps its idempotency-key gate and
+	// relies on the pc_session cookie being SameSite=Lax for CSRF protection.
+	readPayments := v1.Group("/payments", merchantAuth)
 	if rateLimit != nil {
-		payments.Use(rateLimit)
+		readPayments.Use(rateLimit)
 	}
-	payments.Get("/", h.Payment.List)
-	// Money-moving creation requires an idempotency key.
-	payments.Post("/", middleware.RequireIdempotencyKey(), h.Payment.Create)
-	payments.Get("/:id", h.Payment.Get)
-	payments.Post("/:id/capture", middleware.RequireIdempotencyKey(), h.Payment.Capture)
-	payments.Post("/:id/refund", middleware.RequireIdempotencyKey(), h.Payment.Refund)
-	payments.Post("/:id/void", h.Payment.Void)
-	payments.Post("/:id/3ds/return", h.Payment.ThreeDSReturn)
+	readPayments.Get("/", h.Payment.List)
+	readPayments.Get("/:id", h.Payment.Get)
+	readPayments.Post("/:id/refund", middleware.RequireIdempotencyKey(), h.Payment.Refund)
+	readPayments.Get("/:id/disputes", h.Dispute.ListByPayment)
 
-	// Chargebacks / disputes, scoped to the payment.
-	payments.Post("/:id/disputes", h.Dispute.Open)
-	payments.Get("/:id/disputes", h.Dispute.ListByPayment)
+	// Money-moving / lifecycle routes stay API-key-only (auth). A cookie-only
+	// caller is rejected here even though it can reach the read routes above.
+	writePayments := v1.Group("/payments", auth)
+	if rateLimit != nil {
+		writePayments.Use(rateLimit)
+	}
+	writePayments.Post("/", middleware.RequireIdempotencyKey(), h.Payment.Create)
+	writePayments.Post("/:id/capture", middleware.RequireIdempotencyKey(), h.Payment.Capture)
+	writePayments.Post("/:id/void", h.Payment.Void)
+	writePayments.Post("/:id/3ds/return", h.Payment.ThreeDSReturn)
+
+	// Chargebacks / disputes: opening one is a write (API key); listing is a read.
+	writePayments.Post("/:id/disputes", h.Dispute.Open)
 
 	// QR payments (PromptPay dynamic/static, card-scheme QR, cross-border).
 	qr := v1.Group("/qr-payments", auth)
