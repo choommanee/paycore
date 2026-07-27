@@ -14,6 +14,11 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+# next.config.js bakes the /api rewrite destination at BUILD time, so BACKEND_URL
+# must be present during `next build` — Railway supplies the service variable as a
+# build arg. Defaults to localhost for a plain local `docker build`.
+ARG BACKEND_URL=http://localhost:8080
+ENV BACKEND_URL=${BACKEND_URL}
 RUN npm run build
 
 FROM node:20-alpine AS runner
