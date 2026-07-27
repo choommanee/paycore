@@ -24,7 +24,7 @@ export default async function LinksPage() {
     <main className="min-h-screen p-8 max-w-3xl mx-auto">
       <header className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-semibold">Payment Links</h1>
-        <a href="/" className="text-sm text-paycore-muted hover:text-paycore-text">← Dashboard</a>
+        <a href="/dashboard" className="text-sm text-paycore-muted hover:text-paycore-text">← Dashboard</a>
       </header>
 
       <CreateLinkForm />
