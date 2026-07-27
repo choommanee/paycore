@@ -130,6 +130,37 @@ In production (`SANDBOX_MODE=false`) wallet pay returns `422
 CHECKOUT_METHOD_UNAVAILABLE` and `confirm-mock` is absent (`404`); real PSP
 integration is out of scope for this phase.
 
+### Phase 5 — Merchant dashboard polish
+
+The cookie-authed Next.js dashboard is now a working merchant console:
+
+- **Home** (`/`) — KPI tiles from `GET /v1/stats` (30-day card volume, count, success/refund ratios).
+- **Transactions** (`/transactions`, `/transactions/[id]`) — card-payment list + detail, with a
+  refund action (`POST /v1/payments/:id/refund`, idempotency-keyed).
+- **Settings** (`/settings`) — business profile (`GET /v1/me`), API-key rotation
+  (`POST /v1/me/rotate-key`, new key shown once) and webhook config (`PUT /v1/me/webhook`,
+  signing secret shown once).
+
+**Auth:** the dashboard-read routes and refund were retrofitted from API-key-only `auth` to the
+combined session-OR-key `merchantAuth`, so the same endpoints serve both the cookie dashboard and
+API-key clients. Money-moving routes (create / capture / void / 3DS) stay API-key-only. Refund
+relies on the `pc_session` cookie being `SameSite=Lax` for CSRF protection and keeps its
+`Idempotency-Key` gate.
+
+**Transactions scope (known limitation / follow-up):** the Transactions page lists **card**
+payments only (the `payments` table). PromptPay (`qr_payments`) and e-wallet mock transactions
+(`checkout_sessions`, no `payments` row) are NOT yet in this unified list. A future
+`GET /v1/transactions` endpoint aggregating `payments` + `qr_payments` + paid `checkout_sessions`
+(with cross-table pagination) is the planned follow-up. The UI states this explicitly and does not
+imply it shows payments it does not.
+
+**Route guard:** `web-app/middleware.ts` redirects to `/login` when the `pc_session` cookie is
+absent, for `/`, `/transactions/*`, `/settings/*`, and `/links/*`. This is a cheap first-line UX
+guard only (checked via `config.matcher`, so `/login`, `/pay/[publicId]` (public hosted checkout),
+`/api/*`, and Next internals are never touched by it) — cookie *presence* is not proof of a valid
+session, and the JWT signing secret lives only in the Go backend, so every page still keeps its
+`serverGet(...) → 401 → redirect('/login')` handling as the real authorization boundary.
+
 ### Performance & rate limiting
 - Rate limit เป็น **per-merchant** (keyed `m:<merchant_id>`) จาก `RATE_LIMIT_PER_SEC` (default 600/s); health/metrics/webhook ไม่ถูก limit. ไม่มี global per-IP limiter.
 - **Load test ต้องรู้:** harness แบบ single-source ยิงจาก merchant id เดียว → budget ทั้งหมดคือของ merchant นั้น. ตั้ง `RATE_LIMIT_PER_SEC` ≥ concurrency ที่ต้องการ (เช่น ≥300/s สำหรับ 167 TPS target) มิฉะนั้น 429 flood จะทำให้ err rate พุ่งด้วยเหตุผลผิด. สำหรับ staging/load ตั้งค่านี้สูงกว่า prod ceiling ได้.
