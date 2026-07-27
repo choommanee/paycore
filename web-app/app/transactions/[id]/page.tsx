@@ -23,6 +23,18 @@ type Payment = {
 // Refund is only allowed by the service from captured / partial_refunded.
 const REFUNDABLE = new Set(["captured", "partial_refunded"]);
 
+// Semantic pill colors on a light surface.
+const STATUS_PILL: Record<string, string> = {
+  authorized: "bg-paycore-accentBg text-paycore-accentInk",
+  captured: "bg-paycore-successBg text-paycore-success",
+  partial_refunded: "bg-paycore-warnBg text-paycore-warn",
+  refunded: "bg-paycore-warnBg text-paycore-warn",
+  voided: "bg-paycore-dangerBg text-paycore-danger",
+  failed: "bg-paycore-dangerBg text-paycore-danger",
+  requires_action: "bg-paycore-warnBg text-paycore-warn",
+};
+const pillClass = (s: string) => STATUS_PILL[s] ?? "bg-paycore-line2 text-paycore-text2";
+
 export default async function TransactionDetail({ params }: { params: { id: string } }) {
   const res = await serverGet(`/payments/${params.id}`);
   if (res.status === 401) redirect("/login");
@@ -50,10 +62,10 @@ export default async function TransactionDetail({ params }: { params: { id: stri
       <DashboardNav active="/transactions" />
       <a href="/transactions" className="text-sm text-paycore-muted hover:text-paycore-text">← ธุรกรรม</a>
 
-      <div className="rounded-xl2 bg-paycore-surface p-6 mt-4">
+      <div className="rounded-xl2 bg-paycore-surface border border-paycore-line shadow-card p-6 mt-4">
         <div className="flex items-start justify-between">
           <h1 className="text-2xl font-semibold">{formatDecimalMoney(p.amount, p.currency)}</h1>
-          <span className="rounded-full px-3 py-1 text-xs bg-paycore-bg border border-white/10">{p.status}</span>
+          <span className={`inline-block rounded-full px-3 py-1 text-xs font-medium ${pillClass(p.status)}`}>{p.status}</span>
         </div>
 
         <dl className="mt-6 space-y-2 text-sm">
@@ -68,7 +80,7 @@ export default async function TransactionDetail({ params }: { params: { id: stri
         {REFUNDABLE.has(p.status) ? (
           <RefundForm paymentId={p.id} remaining={remaining} currency={p.currency} />
         ) : (
-          <p className="mt-6 border-t border-white/10 pt-6 text-paycore-muted text-sm">
+          <p className="mt-6 border-t border-paycore-line pt-6 text-paycore-muted text-sm">
             สถานะนี้คืนเงินไม่ได้
           </p>
         )}

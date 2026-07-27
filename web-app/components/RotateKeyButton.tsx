@@ -28,7 +28,7 @@ export default function RotateKeyButton() {
         API key จะแสดงเพียงครั้งเดียวตอนสร้างหรือหมุนคีย์ ระบบเก็บเฉพาะค่าแฮชจึงแสดงคีย์เดิมซ้ำไม่ได้
       </p>
       {key ? (
-        <div className="rounded-lg bg-paycore-bg border border-white/10 p-3">
+        <div className="rounded-lg bg-paycore-surface2 border border-paycore-line p-3">
           <p className="text-paycore-muted text-xs mb-1">คีย์ใหม่ (บันทึกทันที จะไม่แสดงอีก)</p>
           <code className="text-sm break-all">{key}</code>
         </div>
@@ -37,11 +37,11 @@ export default function RotateKeyButton() {
           <button
             onClick={rotate}
             disabled={busy}
-            className="rounded-lg bg-red-500/90 hover:bg-red-500 text-white px-4 py-2 text-sm disabled:opacity-60"
+            className="rounded-lg bg-paycore-danger hover:bg-[#8a2626] text-white px-4 py-2 text-sm disabled:opacity-60"
           >
             {busy ? "กำลังหมุนคีย์…" : "ยืนยันหมุนคีย์ (คีย์เดิมใช้ไม่ได้ทันที)"}
           </button>
-          <button onClick={() => setConfirming(false)} className="rounded-lg border border-white/15 px-4 py-2 text-sm">
+          <button onClick={() => setConfirming(false)} className="rounded-lg border border-paycore-line text-paycore-text2 hover:bg-paycore-surface2 px-4 py-2 text-sm">
             ยกเลิก
           </button>
         </div>
@@ -53,7 +53,7 @@ export default function RotateKeyButton() {
           หมุน API key
         </button>
       )}
-      {err && <p className="text-red-400 text-sm">{err}</p>}
+      {err && <p className="text-paycore-danger text-sm">{err}</p>}
     </div>
   );
 }

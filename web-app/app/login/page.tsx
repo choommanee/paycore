@@ -14,13 +14,13 @@ export default function LoginPage() {
 
   return (
     <main className="min-h-screen flex items-center justify-center px-4">
-      <div className="w-full max-w-sm rounded-xl2 bg-paycore-surface p-8 shadow-xl">
+      <div className="w-full max-w-sm rounded-xl2 bg-paycore-surface border border-paycore-line p-8 shadow-cardlg">
         <h1 className="text-2xl font-semibold mb-1">PayCore</h1>
         <p className="text-paycore-muted mb-6 text-sm">เข้าสู่ระบบร้านค้า</p>
 
         <a
           href="/api/auth/google/start"
-          className="block w-full text-center rounded-lg bg-white text-gray-900 font-medium py-2.5 mb-3 hover:bg-gray-100"
+          className="block w-full text-center rounded-lg bg-paycore-surface2 border border-paycore-line text-paycore-text font-medium py-2.5 mb-3 hover:bg-paycore-line2"
         >
           เข้าสู่ระบบด้วย Google
         </a>

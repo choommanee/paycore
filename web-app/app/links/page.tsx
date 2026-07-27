@@ -34,7 +34,7 @@ export default async function LinksPage() {
           <p className="text-paycore-muted text-sm">ยังไม่มีลิงก์ — สร้างอันแรกด้านบน</p>
         )}
         {links.map((l) => (
-          <div key={l.id} className="rounded-xl2 bg-paycore-surface p-4 flex items-center justify-between">
+          <div key={l.id} className="rounded-xl2 bg-paycore-surface border border-paycore-line shadow-card p-4 flex items-center justify-between">
             <div>
               <a href={`/links/${l.id}`} className="font-medium hover:underline">{l.title}</a>
               <p className="text-paycore-muted text-sm">{formatMoney(l.amount_minor, l.currency)} · {l.status}</p>

@@ -114,7 +114,7 @@ export default function CheckoutClient({ publicId }: { publicId: string }) {
   }
 
   if (err && !view) {
-    return <div className="max-w-md w-full rounded-xl2 bg-paycore-surface p-6 mt-10">{err}</div>;
+    return <div className="max-w-md w-full rounded-xl2 bg-paycore-surface border border-paycore-line shadow-cardlg p-6 mt-10">{err}</div>;
   }
   if (!view) {
     return <div className="text-paycore-muted mt-10">กำลังโหลด…</div>;
@@ -127,7 +127,7 @@ export default function CheckoutClient({ publicId }: { publicId: string }) {
   }
 
   return (
-    <div className="max-w-md w-full rounded-xl2 bg-paycore-surface p-6 mt-10 space-y-5">
+    <div className="max-w-md w-full rounded-xl2 bg-paycore-surface border border-paycore-line shadow-cardlg p-6 mt-10 space-y-5">
       <header>
         <p className="text-paycore-muted text-sm">{view.merchant_name}</p>
         <h1 className="text-xl font-semibold">{view.title}</h1>
@@ -143,7 +143,7 @@ export default function CheckoutClient({ publicId }: { publicId: string }) {
               key={m}
               onClick={() => setMethod(m)}
               className={`rounded-full px-4 py-2 text-sm border ${
-                method === m ? "bg-paycore-primary border-paycore-primary text-white" : "border-white/15 text-paycore-muted"
+                method === m ? "bg-paycore-primary border-paycore-primary text-white" : "bg-paycore-surface2 border-paycore-line text-paycore-text2 hover:border-paycore-primary"
               }`}
             >
               {METHOD_LABEL[m] ?? m}
@@ -159,7 +159,7 @@ export default function CheckoutClient({ publicId }: { publicId: string }) {
       {isWallet(method) && (
         <>
           {!view.sandbox && (
-            <p className="text-xs rounded-lg bg-yellow-500/10 text-yellow-300 px-3 py-2">
+            <p className="text-xs rounded-lg bg-paycore-warnBg text-paycore-warn px-3 py-2">
               ช่องทางนี้ยังไม่พร้อมใช้งานบนระบบนี้
             </p>
           )}
@@ -178,20 +178,20 @@ export default function CheckoutClient({ publicId }: { publicId: string }) {
 
       {method === "card" && view.sandbox && (
         <form onSubmit={payCard} className="space-y-3">
-          <p className="text-xs rounded-lg bg-yellow-500/10 text-yellow-300 px-3 py-2">
+          <p className="text-xs rounded-lg bg-paycore-warnBg text-paycore-warn px-3 py-2">
             โหมดทดสอบ (Sandbox) — ใช้บัตรทดสอบเท่านั้น เช่น 4111 1111 1111 1111
           </p>
           <input value={cardNumber} onChange={(e) => setCardNumber(e.target.value)} inputMode="numeric"
-            placeholder="หมายเลขบัตร" className="w-full rounded-lg bg-paycore-bg border border-white/10 px-3 py-2" />
+            placeholder="หมายเลขบัตร" className="w-full rounded-lg bg-paycore-surface2 border border-paycore-line px-3 py-2 focus:outline-none focus:border-paycore-primary" />
           <div className="flex gap-2">
             <input value={expMonth} onChange={(e) => setExpMonth(e.target.value)} inputMode="numeric"
-              placeholder="MM" className="w-1/3 rounded-lg bg-paycore-bg border border-white/10 px-3 py-2" />
+              placeholder="MM" className="w-1/3 rounded-lg bg-paycore-surface2 border border-paycore-line px-3 py-2 focus:outline-none focus:border-paycore-primary" />
             <input value={expYear} onChange={(e) => setExpYear(e.target.value)} inputMode="numeric"
-              placeholder="YYYY" className="w-1/3 rounded-lg bg-paycore-bg border border-white/10 px-3 py-2" />
+              placeholder="YYYY" className="w-1/3 rounded-lg bg-paycore-surface2 border border-paycore-line px-3 py-2 focus:outline-none focus:border-paycore-primary" />
             <input value={cvv} onChange={(e) => setCvv(e.target.value)} inputMode="numeric"
-              placeholder="CVV" className="w-1/3 rounded-lg bg-paycore-bg border border-white/10 px-3 py-2" />
+              placeholder="CVV" className="w-1/3 rounded-lg bg-paycore-surface2 border border-paycore-line px-3 py-2 focus:outline-none focus:border-paycore-primary" />
           </div>
-          {err && <p className="text-red-400 text-sm">{err}</p>}
+          {err && <p className="text-paycore-danger text-sm">{err}</p>}
           <button disabled={busy} className="w-full rounded-lg bg-paycore-primary hover:bg-paycore-primaryHover text-white font-medium px-4 py-2 disabled:opacity-60">
             {busy ? "กำลังชำระเงิน…" : `ชำระ ${formatMoney(view.amount_minor, view.currency)}`}
           </button>
@@ -304,7 +304,7 @@ function CheckoutStatusView({ token, initial }: { token: string; initial: Checko
 
   if (view.status === "paid") {
     return (
-      <div className="max-w-md w-full rounded-xl2 bg-paycore-surface p-8 mt-10 text-center space-y-4">
+      <div className="max-w-md w-full rounded-xl2 bg-paycore-surface border border-paycore-line shadow-cardlg p-8 mt-10 text-center space-y-4">
         <div className="text-4xl">✓</div>
         <h1 className="text-xl font-semibold">ชำระเงินสำเร็จ</h1>
         <p className="text-paycore-muted">{formatMoney(view.amount_minor, view.currency)}</p>
@@ -318,7 +318,7 @@ function CheckoutStatusView({ token, initial }: { token: string; initial: Checko
   }
   if (view.status === "expired" || view.status === "failed") {
     return (
-      <div className="max-w-md w-full rounded-xl2 bg-paycore-surface p-8 mt-10 text-center space-y-3">
+      <div className="max-w-md w-full rounded-xl2 bg-paycore-surface border border-paycore-line shadow-cardlg p-8 mt-10 text-center space-y-3">
         <div className="text-4xl">⚠️</div>
         <h1 className="text-lg font-semibold">
           {view.status === "expired" ? "หมดเวลาชำระเงิน" : "ชำระเงินไม่สำเร็จ"}
@@ -331,18 +331,18 @@ function CheckoutStatusView({ token, initial }: { token: string; initial: Checko
   // Wallet mock: simulate the PSP approve/decline screen (sandbox only).
   if (walletAwaiting) {
     return (
-      <div className="max-w-md w-full rounded-xl2 bg-paycore-surface p-6 mt-10 text-center space-y-4">
+      <div className="max-w-md w-full rounded-xl2 bg-paycore-surface border border-paycore-line shadow-cardlg p-6 mt-10 text-center space-y-4">
         <p className="text-paycore-muted text-sm">{view.merchant_name}</p>
         <h1 className="text-lg font-semibold">{METHOD_LABEL[view.selected_method ?? ""] ?? view.selected_method}</h1>
         <p className="text-2xl font-bold">{formatMoney(view.amount_minor, view.currency)}</p>
-        <p className="text-xs rounded-lg bg-yellow-500/10 text-yellow-300 px-3 py-2">
+        <p className="text-xs rounded-lg bg-paycore-warnBg text-paycore-warn px-3 py-2">
           โหมดทดสอบ (Sandbox) — จำลองหน้าอนุมัติของผู้ให้บริการ
         </p>
         <div className="flex gap-2">
           <button onClick={() => confirmMock(true)} className="flex-1 rounded-lg bg-paycore-primary hover:bg-paycore-primaryHover text-white font-medium px-4 py-2">
             อนุมัติการชำระเงิน
           </button>
-          <button onClick={() => confirmMock(false)} className="flex-1 rounded-lg border border-white/15 text-paycore-muted px-4 py-2">
+          <button onClick={() => confirmMock(false)} className="flex-1 rounded-lg border border-paycore-line text-paycore-text2 hover:bg-paycore-surface2 px-4 py-2">
             ปฏิเสธ
           </button>
         </div>
@@ -352,7 +352,7 @@ function CheckoutStatusView({ token, initial }: { token: string; initial: Checko
 
   // PromptPay awaiting: show QR + amount.
   return (
-    <div className="max-w-md w-full rounded-xl2 bg-paycore-surface p-6 mt-10 text-center space-y-4">
+    <div className="max-w-md w-full rounded-xl2 bg-paycore-surface border border-paycore-line shadow-cardlg p-6 mt-10 text-center space-y-4">
       <p className="text-paycore-muted text-sm">{view.merchant_name}</p>
       <h1 className="text-lg font-semibold">สแกนเพื่อชำระด้วย PromptPay</h1>
       <p className="text-2xl font-bold">{formatMoney(view.amount_minor, view.currency)}</p>

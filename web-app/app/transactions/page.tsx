@@ -26,6 +26,18 @@ const STATUS_LABEL: Record<string, string> = {
   requires_action: "รอยืนยัน",
 };
 
+// Semantic pill colors on a light surface.
+const STATUS_PILL: Record<string, string> = {
+  authorized: "bg-paycore-accentBg text-paycore-accentInk",
+  captured: "bg-paycore-successBg text-paycore-success",
+  partial_refunded: "bg-paycore-warnBg text-paycore-warn",
+  refunded: "bg-paycore-warnBg text-paycore-warn",
+  voided: "bg-paycore-dangerBg text-paycore-danger",
+  failed: "bg-paycore-dangerBg text-paycore-danger",
+  requires_action: "bg-paycore-warnBg text-paycore-warn",
+};
+const pillClass = (s: string) => STATUS_PILL[s] ?? "bg-paycore-line2 text-paycore-text2";
+
 export default async function TransactionsPage({
   searchParams,
 }: {
@@ -54,7 +66,7 @@ export default async function TransactionsPage({
           <a
             key={p.id}
             href={`/transactions/${p.id}`}
-            className="rounded-xl2 bg-paycore-surface p-4 flex items-center justify-between hover:bg-white/5"
+            className="rounded-xl2 bg-paycore-surface border border-paycore-line shadow-card p-4 flex items-center justify-between hover:bg-paycore-surface2 transition-colors"
           >
             <div>
               <p className="font-medium">{formatDecimalMoney(p.amount, p.currency)}</p>
@@ -64,7 +76,7 @@ export default async function TransactionsPage({
               </p>
             </div>
             <div className="text-right">
-              <span className="rounded-full px-3 py-1 text-xs bg-paycore-bg border border-white/10">
+              <span className={`inline-block rounded-full px-3 py-1 text-xs font-medium ${pillClass(p.status)}`}>
                 {STATUS_LABEL[p.status] ?? p.status}
               </span>
               <p className="text-paycore-muted text-xs mt-1">

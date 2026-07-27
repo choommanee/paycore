@@ -32,7 +32,7 @@ export default async function SettingsPage() {
       <DashboardNav active="/settings" />
       <h1 className="text-xl font-semibold mb-6">ตั้งค่า</h1>
 
-      <section className="rounded-xl2 bg-paycore-surface p-6 mb-6">
+      <section className="rounded-xl2 bg-paycore-surface border border-paycore-line shadow-card p-6 mb-6">
         <h2 className="font-medium mb-4">ข้อมูลร้านค้า</h2>
         <dl className="space-y-2 text-sm">
           {rows.map(([k, v]) => (
@@ -44,12 +44,12 @@ export default async function SettingsPage() {
         </dl>
       </section>
 
-      <section className="rounded-xl2 bg-paycore-surface p-6 mb-6">
+      <section className="rounded-xl2 bg-paycore-surface border border-paycore-line shadow-card p-6 mb-6">
         <h2 className="font-medium mb-4">API key</h2>
         <RotateKeyButton />
       </section>
 
-      <section className="rounded-xl2 bg-paycore-surface p-6">
+      <section className="rounded-xl2 bg-paycore-surface border border-paycore-line shadow-card p-6">
         <h2 className="font-medium mb-4">Webhook</h2>
         {p.webhook_url && (
           <p className="text-paycore-muted text-xs mb-3">ปัจจุบัน: {p.webhook_url}</p>

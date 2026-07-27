@@ -8,7 +8,7 @@ export default function DashboardNav({ active }: { active?: string }) {
     { href: "/settings", label: "ตั้งค่า" },
   ];
   return (
-    <header className="flex items-center justify-between mb-8">
+    <header className="flex items-center justify-between mb-8 pb-4 border-b border-paycore-line">
       <nav className="flex items-center gap-4">
         <span className="text-xl font-semibold">PayCore</span>
         {items.map((it) => (

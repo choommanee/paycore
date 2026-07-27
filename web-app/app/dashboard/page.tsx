@@ -38,7 +38,7 @@ export default async function DashboardHome() {
 
       <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {tiles.map((t) => (
-          <div key={t.label} className="rounded-xl2 bg-paycore-surface p-5">
+          <div key={t.label} className="rounded-xl2 bg-paycore-surface border border-paycore-line shadow-card p-5">
             <p className="text-paycore-muted text-xs">{t.label}</p>
             <p className="text-2xl font-semibold mt-2">{t.value}</p>
           </div>

@@ -38,11 +38,11 @@ export default function WebhookForm({ initialUrl }: { initialUrl: string }) {
         placeholder="https://example.com/webhooks/paycore"
         value={url}
         onChange={(e) => setUrl(e.target.value)}
-        className="w-full rounded-lg bg-paycore-bg border border-white/10 px-3 py-2 text-sm"
+        className="w-full rounded-lg bg-paycore-surface2 border border-paycore-line px-3 py-2 text-sm focus:outline-none focus:border-paycore-primary"
       />
-      {err && <p className="text-red-400 text-sm">{err}</p>}
+      {err && <p className="text-paycore-danger text-sm">{err}</p>}
       {secret && (
-        <div className="rounded-lg bg-paycore-bg border border-white/10 p-3">
+        <div className="rounded-lg bg-paycore-surface2 border border-paycore-line p-3">
           <p className="text-paycore-muted text-xs mb-1">Signing secret ใหม่ (แสดงครั้งเดียว)</p>
           <code className="text-sm break-all">{secret}</code>
         </div>

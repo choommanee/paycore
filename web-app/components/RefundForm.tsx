@@ -46,7 +46,7 @@ export default function RefundForm({
   }
 
   return (
-    <form onSubmit={submit} className="mt-6 space-y-3 border-t border-white/10 pt-6">
+    <form onSubmit={submit} className="mt-6 space-y-3 border-t border-paycore-line pt-6">
       <h2 className="font-medium">คืนเงิน</h2>
       <div className="flex gap-2">
         <input
@@ -56,7 +56,7 @@ export default function RefundForm({
           max={remaining}
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
-          className="w-40 rounded-lg bg-paycore-bg border border-white/10 px-3 py-2 text-sm"
+          className="w-40 rounded-lg bg-paycore-surface2 border border-paycore-line px-3 py-2 text-sm focus:outline-none focus:border-paycore-primary"
         />
         <input
           type="text"
@@ -64,12 +64,12 @@ export default function RefundForm({
           maxLength={140}
           value={reason}
           onChange={(e) => setReason(e.target.value)}
-          className="flex-1 rounded-lg bg-paycore-bg border border-white/10 px-3 py-2 text-sm"
+          className="flex-1 rounded-lg bg-paycore-surface2 border border-paycore-line px-3 py-2 text-sm focus:outline-none focus:border-paycore-primary"
         />
       </div>
       <p className="text-paycore-muted text-xs">คืนได้สูงสุด {remaining.toFixed(2)} {currency}</p>
-      {err && <p className="text-red-400 text-sm">{err}</p>}
-      {done && <p className="text-green-400 text-sm">คืนเงินสำเร็จ</p>}
+      {err && <p className="text-paycore-danger text-sm">{err}</p>}
+      {done && <p className="text-paycore-success text-sm">คืนเงินสำเร็จ</p>}
       <button
         type="submit"
         disabled={busy}
