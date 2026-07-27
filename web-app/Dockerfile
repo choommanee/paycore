@@ -5,7 +5,9 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+# npm install (not `npm ci`): the lock carries a benign nested-picomatch quirk that
+# the builder's stricter npm rejects under `npm ci`; `npm install` reconciles it.
+RUN npm install --no-audit --no-fund
 
 FROM node:20-alpine AS builder
 WORKDIR /app
