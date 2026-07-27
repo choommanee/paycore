@@ -94,6 +94,12 @@ func Setup(app *fiber.App, h *handler.Handlers, auth, sessionAuth, merchantAuth,
 		}
 		checkout.Get("/sessions/:token", h.Checkout.Get)
 		checkout.Post("/sessions/:token/pay", h.Checkout.Pay)
+		// Wallet approve/decline simulator. Mounted ONLY when SANDBOX_MODE=true so
+		// production has no way to mark a session paid without a real PSP callback
+		// (route absent -> 404). Public: the session token is the credential.
+		if sandbox {
+			checkout.Post("/sessions/:token/confirm-mock", h.Checkout.ConfirmMock)
+		}
 	}
 
 	// Payments require merchant API-key auth. The resolved merchant scopes every

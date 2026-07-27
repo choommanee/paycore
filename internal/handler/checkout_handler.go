@@ -73,3 +73,22 @@ func (h *CheckoutHandler) Pay(c *fiber.Ctx) error {
 	}
 	return domain.Success(c, view)
 }
+
+// ConfirmMock simulates a wallet approve/decline for a session awaiting action.
+// PUBLIC + SANDBOX ONLY — the router mounts this route only when sandbox is on.
+// @Router /v1/checkout/sessions/{token}/confirm-mock [post]
+func (h *CheckoutHandler) ConfirmMock(c *fiber.Ctx) error {
+	token := c.Params("token")
+	if token == "" {
+		return domain.Error(c, fiber.StatusBadRequest, "INVALID_TOKEN", "missing session token")
+	}
+	var req domain.CheckoutConfirmMockRequest
+	if err := c.BodyParser(&req); err != nil {
+		return domain.Error(c, fiber.StatusBadRequest, "INVALID_BODY", "invalid request body")
+	}
+	view, err := h.svc.ConfirmMock(c.Context(), token, req.Approve)
+	if err != nil {
+		return err
+	}
+	return domain.Success(c, view)
+}
