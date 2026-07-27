@@ -50,6 +50,9 @@ type CheckoutService interface {
 	CreateFromLink(ctx context.Context, publicID string) (*domain.CheckoutSessionView, error)
 	Get(ctx context.Context, token string) (*domain.CheckoutSessionView, error)
 	Pay(ctx context.Context, token string, req domain.CheckoutPayRequest) (*domain.CheckoutSessionView, error)
+	// ConfirmMock simulates a wallet approve (true) / decline (false) for a session
+	// awaiting action. SANDBOX ONLY — the HTTP route is absent in production.
+	ConfirmMock(ctx context.Context, token string, approve bool) (*domain.CheckoutSessionView, error)
 }
 
 type checkoutService struct {
@@ -424,6 +427,63 @@ func (s *checkoutService) payWallet(ctx context.Context, row repository.Checkout
 	}
 	// No QRPayload / NextActionURL: the mock approve/decline is driven inline by
 	// the frontend against ConfirmMock; there is no external redirect.
+	return s.buildView(ctx, updated, nil), nil
+}
+
+// ConfirmMock completes a wallet session in requires_action: approve -> paid
+// (closing a single_use link), decline -> failed (releasing the reservation). It
+// is SANDBOX ONLY (the route is not mounted in production) and applies ONLY to a
+// wallet session awaiting action; anything else (already terminal, promptpay
+// QR-awaiting, expired) is a no-op that returns the current view. It scopes
+// everything to the session the token resolves; merchant context comes from the
+// row.
+func (s *checkoutService) ConfirmMock(ctx context.Context, token string, approve bool) (*domain.CheckoutSessionView, error) {
+	if !s.sandbox {
+		return nil, domain.ErrCheckoutMethodUnavailable
+	}
+	row, err := s.loadByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if row.ExpiresAt.Valid && time.Now().After(row.ExpiresAt.Time) {
+		_, _ = s.transition(ctx, row, domain.CheckoutExpired)
+		return nil, domain.ErrCheckoutSessionExpired
+	}
+	// Only a wallet session actually awaiting action can be confirmed. Anything
+	// else is an idempotent no-op returning the current view (double-submit, an
+	// already-terminal session, or a non-wallet requires_action like promptpay
+	// which confirms via the QR webhook instead).
+	if domain.CheckoutStatus(row.Status) != domain.CheckoutRequiresAction || !domain.IsWalletMethod(row.SelectedMethod) {
+		return s.Get(ctx, token)
+	}
+
+	if approve {
+		updated, err := s.transition(ctx, row, domain.CheckoutPaid)
+		if err != nil {
+			return nil, err
+		}
+		// single_use link was already reserved (flipped to paid) in payWallet;
+		// this is an idempotent no-op for it and handles reusable (no-op) too.
+		s.markLinkPaid(ctx, updated)
+		return s.buildView(ctx, updated, nil), nil
+	}
+
+	updated, err := s.transition(ctx, row, domain.CheckoutFailed)
+	if err != nil {
+		return nil, err
+	}
+	// Release the single_use reservation so the link can be retried. Load the link
+	// to pass releaseLinkReservation a non-nil pointer ONLY when it is single_use
+	// (reusable links were never reserved, so pass nil -> no-op).
+	var reserved *repository.PaymentLink
+	if row.PaymentLinkID.Valid {
+		if l, lerr := s.repo.GetPaymentLink(ctx, repository.GetPaymentLinkParams{
+			ID: row.PaymentLinkID, MerchantID: row.MerchantID,
+		}); lerr == nil && l.LinkType == "single_use" {
+			reserved = &l
+		}
+	}
+	s.releaseLinkReservation(ctx, reserved, row)
 	return s.buildView(ctx, updated, nil), nil
 }
 

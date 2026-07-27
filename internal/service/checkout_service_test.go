@@ -930,3 +930,101 @@ func TestPayWalletSingleUseAlreadyConsumedRefuses(t *testing.T) {
 		t.Fatalf("session status = %q want failed", row.Status)
 	}
 }
+
+// ---- Task: ConfirmMock -----------------------------------------------------
+
+// walletRequiresAction opens a session and drives it to requires_action via a
+// wallet method, returning the token.
+func walletRequiresAction(t *testing.T, repo *fakeCheckoutRepo, svc CheckoutService, method string) string {
+	t.Helper()
+	tok := openSession(t, repo, svc)
+	if _, err := svc.Pay(context.Background(), tok, domain.CheckoutPayRequest{Method: method}); err != nil {
+		t.Fatalf("Pay(%s): %v", method, err)
+	}
+	return tok
+}
+
+func TestConfirmMockApproveMarksPaidAndClosesLink(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	mkLink(repo, merchant, "pl_abc", 5000, []string{"truemoney"})
+	svc := newCheckoutSvc(repo, &fakeCharger{}, &fakeQR{}, &fakeVault{}, true)
+	tok := walletRequiresAction(t, repo, svc, "truemoney")
+
+	view, err := svc.ConfirmMock(context.Background(), tok, true)
+	if err != nil {
+		t.Fatalf("ConfirmMock approve: %v", err)
+	}
+	if view.Status != string(domain.CheckoutPaid) {
+		t.Fatalf("status = %q want paid", view.Status)
+	}
+	// Reserved at pay time -> [paid]; approve's markLinkPaid is an idempotent
+	// no-op (link already paid), so the ledger stays [paid].
+	if len(repo.linkStatusSets) != 1 || repo.linkStatusSets[0] != "paid" {
+		t.Fatalf("link status sets = %v want [paid]", repo.linkStatusSets)
+	}
+}
+
+func TestConfirmMockDeclineMarksFailedAndReleasesLink(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	mkLink(repo, merchant, "pl_abc", 5000, []string{"shopeepay"})
+	svc := newCheckoutSvc(repo, &fakeCharger{}, &fakeQR{}, &fakeVault{}, true)
+	tok := walletRequiresAction(t, repo, svc, "shopeepay")
+
+	view, err := svc.ConfirmMock(context.Background(), tok, false)
+	if err != nil {
+		t.Fatalf("ConfirmMock decline: %v", err)
+	}
+	if view.Status != string(domain.CheckoutFailed) {
+		t.Fatalf("status = %q want failed", view.Status)
+	}
+	// Reserve then release -> [paid active].
+	if len(repo.linkStatusSets) != 2 || repo.linkStatusSets[0] != "paid" || repo.linkStatusSets[1] != "active" {
+		t.Fatalf("link status sets = %v want [paid active]", repo.linkStatusSets)
+	}
+}
+
+func TestConfirmMockBlockedOutsideSandbox(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	mkLink(repo, merchant, "pl_abc", 5000, []string{"alipay"})
+	// Reach requires_action while sandbox is on, then confirm with a sandbox-off
+	// service pointed at the same repo.
+	on := newCheckoutSvc(repo, &fakeCharger{}, &fakeQR{}, &fakeVault{}, true)
+	tok := walletRequiresAction(t, repo, on, "alipay")
+	off := newCheckoutSvc(repo, &fakeCharger{}, &fakeQR{}, &fakeVault{}, false)
+
+	if _, err := off.ConfirmMock(context.Background(), tok, true); err != domain.ErrCheckoutMethodUnavailable {
+		t.Fatalf("err = %v want ErrCheckoutMethodUnavailable (confirm-mock is sandbox-only)", err)
+	}
+}
+
+func TestConfirmMockNonWalletSessionIsNoop(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	mkLink(repo, merchant, "pl_abc", 5000, []string{"promptpay"})
+	qr := &fakeQR{} // default: awaiting_payment
+	svc := newCheckoutSvc(repo, &fakeCharger{}, qr, &fakeVault{}, true)
+	tok := openSession(t, repo, svc)
+	if _, err := svc.Pay(context.Background(), tok, domain.CheckoutPayRequest{Method: "promptpay"}); err != nil {
+		t.Fatalf("Pay promptpay: %v", err)
+	}
+	// promptpay is requires_action but NOT a wallet method: confirm-mock must not
+	// flip it; it returns the current (requires_action) view unchanged.
+	view, err := svc.ConfirmMock(context.Background(), tok, true)
+	if err != nil {
+		t.Fatalf("ConfirmMock: %v", err)
+	}
+	if view.Status != string(domain.CheckoutRequiresAction) {
+		t.Fatalf("status = %q want requires_action (unchanged)", view.Status)
+	}
+}
+
+func TestConfirmMockUnknownTokenIs404(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	svc := newCheckoutSvc(repo, &fakeCharger{}, &fakeQR{}, &fakeVault{}, true)
+	if _, err := svc.ConfirmMock(context.Background(), "cs_nope", true); err != domain.ErrCheckoutSessionNotFound {
+		t.Fatalf("err = %v want ErrCheckoutSessionNotFound", err)
+	}
+}
