@@ -166,12 +166,30 @@ session, and the JWT signing secret lives only in the Go backend, so every page 
 - **Load test ต้องรู้:** harness แบบ single-source ยิงจาก merchant id เดียว → budget ทั้งหมดคือของ merchant นั้น. ตั้ง `RATE_LIMIT_PER_SEC` ≥ concurrency ที่ต้องการ (เช่น ≥300/s สำหรับ 167 TPS target) มิฉะนั้น 429 flood จะทำให้ err rate พุ่งด้วยเหตุผลผิด. สำหรับ staging/load ตั้งค่านี้สูงกว่า prod ceiling ได้.
 - pgx pool: `DB_MAX_CONNS` (default 50) / `DB_MIN_CONNS` (default 10).
 
-## เริ่มต้น
+## เริ่มต้น (local dev — ไม่ต้องใช้ docker)
+
+ต้องมี **Go 1.24+**, **Node 20+**, และ **PostgreSQL** รันอยู่ (เช่น `brew services start postgresql@14`).
+
+```bash
+# 1) ครั้งแรก: สร้าง DB + role ให้ตรงกับ DATABASE_URL ใน .env.example
+createdb payment_gateway            # (ถ้ายังไม่มี)
+cp .env.example .env                # แก้ DATABASE_URL ให้ตรงกับ Postgres ของคุณ
+
+# 2) รัน API (เทอร์มินัลที่ 1) — sandbox + migrate อัตโนมัติ, ไม่ต้องมี docker/migrate CLI
+make dev                            # เสิร์ฟที่ http://localhost:8080
+
+# 3) รัน dashboard + หน้า checkout (เทอร์มินัลที่ 2) — ติดตั้ง deps ให้เองรอบแรก
+make web                            # เปิด http://localhost:3000
+```
+
+เปิด **http://localhost:3000** → กด **Dev login** (sandbox) → สร้าง Payment Link → เปิดหน้า `/pay/<id>` เพื่อจ่ายจริง (card ทดสอบ `4111 1111 1111 1111` / PromptPay / e-wallet) → กลับมาดู transaction + refund ใน dashboard.
+
+> **ปุ่ม Google login** ใช้ได้เมื่อตั้ง `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` ใน `.env`; ระหว่าง dev ใช้ **Dev login** ได้เลย (เปิดเฉพาะ `SANDBOX_MODE=true`).
+
+### ทางเลือก: docker (ต้องมี Docker daemon รันอยู่)
 ```bash
 cp .env.example .env
-make docker          # รัน postgres + app ด้วย docker compose
-# หรือ local:
-make tidy && make sqlc && make migrate-up && make run
+make docker          # postgres + app ด้วย docker compose
 ```
 
 ## หมายเหตุความปลอดภัย

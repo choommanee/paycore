@@ -1,7 +1,17 @@
-.PHONY: run build test lint sec sqlc migrate-up migrate-down docker tidy
+.PHONY: run dev web build test lint sec sqlc migrate-up migrate-down docker tidy
 
 run:        ## run locally
 	go run ./cmd/server
+
+dev:        ## run the API for local dev (sandbox + auto-migrate; no docker/migrate-CLI needed)
+	SANDBOX_MODE=true MIGRATE_ON_BOOT=true \
+	JWT_SECRET=$${JWT_SECRET:-dev-secret-dev-secret-dev-secret-xx} \
+	PUBLIC_BASE_URL=$${PUBLIC_BASE_URL:-http://localhost:3000} \
+	go run ./cmd/server
+
+web:        ## run the Next.js dashboard + checkout (installs deps on first run)
+	cd web-app && { [ -d node_modules ] || npm install; } && \
+	BACKEND_URL=$${BACKEND_URL:-http://localhost:8080} npm run dev
 
 build:
 	go build -o bin/server ./cmd/server
