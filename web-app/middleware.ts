@@ -24,5 +24,6 @@ export const config = {
     "/payouts/:path*",
     "/settings/:path*",
     "/links/:path*",
+    "/developers/:path*",
   ],
 };
