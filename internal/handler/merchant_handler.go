@@ -122,6 +122,31 @@ func (h *MerchantHandler) Stats(c *fiber.Ctx) error {
 	return domain.Success(c, stats)
 }
 
+// StatsSeries godoc
+// @Summary  Daily payment series (volume + count) for the dashboard sparkline
+// @Router   /v1/stats/series [get]
+func (h *MerchantHandler) StatsSeries(c *fiber.Ctx) error {
+	mid, ok := middleware.MerchantIDFromCtx(c)
+	if !ok {
+		return domain.Error(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "merchant not authenticated")
+	}
+	// days defaults to 30 and is clamped to [1, 90]; unlike from/to on /v1/stats,
+	// an out-of-range value is clamped rather than rejected since it only bounds
+	// how much history is drawn, not which payments are counted.
+	days := c.QueryInt("days", 30)
+	if days < 1 {
+		days = 1
+	}
+	if days > 90 {
+		days = 90
+	}
+	series, err := h.svc.StatsSeries(c.Context(), mid, days)
+	if err != nil {
+		return err
+	}
+	return domain.Success(c, series)
+}
+
 // Settlements godoc
 // @Summary  The merchant's settlement / payout rows
 // @Router   /v1/settlements [get]

@@ -37,6 +37,9 @@ func (f fakeMerchantSvc) Profile(context.Context, uuid.UUID) (*domain.MerchantPr
 func (f fakeMerchantSvc) Stats(context.Context, uuid.UUID, time.Time, time.Time) (*domain.MerchantStats, error) {
 	return &domain.MerchantStats{Count: 1, VolumeMinor: 10000}, nil
 }
+func (f fakeMerchantSvc) StatsSeries(context.Context, uuid.UUID, int) (*domain.StatsSeries, error) {
+	return &domain.StatsSeries{Days: 30}, nil
+}
 func (f fakeMerchantSvc) ListSettlements(context.Context, uuid.UUID, int) ([]*domain.Settlement, error) {
 	return []*domain.Settlement{}, nil
 }
@@ -112,7 +115,7 @@ func TestRetrofit_CookieReachesDashboardRoutes(t *testing.T) {
 		resp, _ := app.Test(req)
 		return resp.StatusCode
 	}
-	for _, p := range []string{"/v1/me", "/v1/stats", "/v1/settlements", "/v1/payments", "/v1/payments/" + uuid.NewString()} {
+	for _, p := range []string{"/v1/me", "/v1/stats", "/v1/stats/series", "/v1/settlements", "/v1/payments", "/v1/payments/" + uuid.NewString()} {
 		if code := get(p); code != 200 {
 			t.Fatalf("GET %s via cookie -> %d want 200", p, code)
 		}

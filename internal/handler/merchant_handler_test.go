@@ -45,6 +45,10 @@ func (f *fakeMerchantSvc) Stats(_ context.Context, _ uuid.UUID, from, to time.Ti
 	return &domain.MerchantStats{From: from, To: to}, nil
 }
 
+func (f *fakeMerchantSvc) StatsSeries(_ context.Context, _ uuid.UUID, days int) (*domain.StatsSeries, error) {
+	return &domain.StatsSeries{Days: days}, nil
+}
+
 func (f *fakeMerchantSvc) ListSettlements(_ context.Context, _ uuid.UUID, _ int) ([]*domain.Settlement, error) {
 	return nil, nil
 }
@@ -131,6 +135,111 @@ func TestMerchantGetUnauthenticatedReturns404(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != fiber.StatusNotFound {
 		t.Fatalf("unauthenticated GET -> %d, want 404", resp.StatusCode)
+	}
+}
+
+// spyMerchantSvc wraps fakeMerchantSvc and records the `days` argument
+// StatsSeries was called with, so a test can assert the handler's clamping
+// logic reaches the service correctly.
+type spyMerchantSvc struct {
+	fakeMerchantSvc
+	gotDays int
+}
+
+func (s *spyMerchantSvc) StatsSeries(ctx context.Context, id uuid.UUID, days int) (*domain.StatsSeries, error) {
+	s.gotDays = days
+	return s.fakeMerchantSvc.StatsSeries(ctx, id, days)
+}
+
+// TestStatsSeriesReturnsEnvelope asserts GET /v1/stats/series returns 200 with
+// the success envelope wrapping the domain.StatsSeries shape (days, series,
+// totals, trend).
+func TestStatsSeriesReturnsEnvelope(t *testing.T) {
+	h := NewMerchantHandler(&fakeMerchantSvc{}, zerolog.Nop())
+	app := fiber.New(fiber.Config{ErrorHandler: middleware.ErrorHandler(zerolog.Nop())})
+	app.Get("/v1/stats/series", withMerchant(uuid.New()), h.StatsSeries)
+
+	resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, "/v1/stats/series", nil))
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("status=%d want 200", resp.StatusCode)
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	var env struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Days   int                       `json:"days"`
+			Series []domain.StatsSeriesPoint `json:"series"`
+			Totals domain.StatsSeriesTotals  `json:"totals"`
+			Trend  domain.StatsSeriesTrend   `json:"trend"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		t.Fatalf("unmarshal: %v (%s)", err, body)
+	}
+	if !env.Success {
+		t.Fatalf("success=false: %s", body)
+	}
+	if env.Data.Days != 30 {
+		t.Fatalf("data.days=%d want 30 (default)", env.Data.Days)
+	}
+}
+
+// TestStatsSeriesUnauthenticatedReturns401 mirrors the other /v1/stats-style
+// handlers: no authenticated merchant in context -> 401, not a panic.
+func TestStatsSeriesUnauthenticatedReturns401(t *testing.T) {
+	h := NewMerchantHandler(&fakeMerchantSvc{}, zerolog.Nop())
+	app := fiber.New(fiber.Config{ErrorHandler: middleware.ErrorHandler(zerolog.Nop())})
+	app.Get("/v1/stats/series", h.StatsSeries) // no auth middleware
+
+	resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, "/v1/stats/series", nil))
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != fiber.StatusUnauthorized {
+		t.Fatalf("status=%d want 401", resp.StatusCode)
+	}
+}
+
+// TestStatsSeriesDaysClamping asserts the handler clamps ?days to [1, 90] and
+// defaults to 30 when absent/invalid, before it ever reaches the service.
+func TestStatsSeriesDaysClamping(t *testing.T) {
+	cases := []struct {
+		name  string
+		query string
+		want  int
+	}{
+		{"default", "", 30},
+		{"in range", "?days=7", 7},
+		{"below min clamps to 1", "?days=0", 1},
+		{"negative clamps to 1", "?days=-5", 1},
+		{"above max clamps to 90", "?days=365", 90},
+		{"non-numeric falls back to default", "?days=abc", 30},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &spyMerchantSvc{}
+			h := NewMerchantHandler(svc, zerolog.Nop())
+			app := fiber.New(fiber.Config{ErrorHandler: middleware.ErrorHandler(zerolog.Nop())})
+			app.Get("/v1/stats/series", withMerchant(uuid.New()), h.StatsSeries)
+
+			resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, "/v1/stats/series"+tc.query, nil))
+			if err != nil {
+				t.Fatalf("app.Test: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != fiber.StatusOK {
+				t.Fatalf("status=%d want 200", resp.StatusCode)
+			}
+			if svc.gotDays != tc.want {
+				t.Fatalf("days passed to service=%d want %d", svc.gotDays, tc.want)
+			}
+		})
 	}
 }
 
