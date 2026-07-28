@@ -126,7 +126,9 @@ func (s *sandboxService) confirm(ctx context.Context, id uuid.UUID, status strin
 		return nil, err
 	}
 	// The SERVER signs the body with the shared secret; the browser never sees it.
-	sig := external.ComputeQRWebhookSignature(s.webhookSecret, body)
+	// Use the preferred timestamped (v1) form so the confirmation passes the
+	// inbound replay/freshness check exactly like a real bank callback.
+	sig := external.ComputeQRWebhookSignatureV1(s.webhookSecret, time.Now().Unix(), body)
 	return s.qr.ConfirmFromWebhook(ctx, sig, body)
 }
 

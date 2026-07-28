@@ -31,7 +31,10 @@ type QRProvider interface {
 	// already built, while still registering the reference for reconciliation.
 	Generate(ctx context.Context, req QRGenRequest) (*QRGenResult, error)
 
-	// VerifyWebhook validates the signature/HMAC of an inbound confirmation and
-	// returns the raw verified body. Returns an error if the signature is bad.
+	// VerifyWebhook validates the signature/HMAC of an inbound confirmation.
+	// signature is the raw header value: the preferred timestamped form
+	// "t=<unix>,v1=<hex HMAC(secret,"<t>.<body>")>" (replay-resistant — a stale
+	// timestamp is rejected) or the legacy body-only "<hex>" / "sha256=<hex>".
+	// Returns an error if the signature is bad, tampered, or replayed.
 	VerifyWebhook(ctx context.Context, signature string, body []byte) error
 }

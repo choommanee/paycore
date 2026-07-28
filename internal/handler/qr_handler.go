@@ -72,7 +72,13 @@ func (h *QRHandler) Get(c *fiber.Ctx) error {
 // @Description Signature is verified before the body is trusted. Reconciled by reference.
 // @Router  /v1/webhooks/qr [post]
 func (h *QRHandler) Webhook(c *fiber.Ctx) error {
-	signature := c.Get("X-Signature")
+	// Prefer the timestamped, replay-resistant signature (X-PayCore-Signature:
+	// t=<unix>,v1=<hex>); fall back to the legacy body-only X-Signature header so
+	// existing/older bank senders keep working.
+	signature := c.Get("X-PayCore-Signature")
+	if signature == "" {
+		signature = c.Get("X-Signature")
+	}
 	qp, err := h.svc.ConfirmFromWebhook(c.Context(), signature, c.Body())
 	if err != nil {
 		return err
