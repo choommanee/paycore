@@ -41,6 +41,40 @@ type MerchantStats struct {
 	To              time.Time     `json:"to"`
 }
 
+// StatsSeriesPoint is one day of the daily series returned by
+// GET /v1/stats/series. VolumeMinor and Count are zero for calendar days with
+// no payments (the service zero-fills gaps left by the DB, which only returns
+// days that have rows). Date is UTC, formatted YYYY-MM-DD.
+type StatsSeriesPoint struct {
+	Date        string `json:"date"`
+	VolumeMinor int64  `json:"volume_minor"`
+	Count       int64  `json:"count"`
+}
+
+// StatsSeriesTotals sums the series over the requested window.
+type StatsSeriesTotals struct {
+	VolumeMinor int64 `json:"volume_minor"`
+	Count       int64 `json:"count"`
+}
+
+// StatsSeriesTrend compares the requested window against the immediately
+// preceding window of equal length. Values are fractions (e.g. 0.124 = +12.4%);
+// both are 0 when the previous window has no activity to compare against.
+type StatsSeriesTrend struct {
+	VolumePct float64 `json:"volume_pct"`
+	CountPct  float64 `json:"count_pct"`
+}
+
+// StatsSeries is the payload for GET /v1/stats/series: a zero-filled daily
+// series for the dashboard sparkline plus window totals and the trend vs the
+// prior equal-length window.
+type StatsSeries struct {
+	Days   int                `json:"days"`
+	Series []StatsSeriesPoint `json:"series"`
+	Totals StatsSeriesTotals  `json:"totals"`
+	Trend  StatsSeriesTrend   `json:"trend"`
+}
+
 // Settlement is one payout row returned by GET /v1/settlements. Amounts are
 // minor units. It mirrors the settlement worker's payout output.
 type Settlement struct {
