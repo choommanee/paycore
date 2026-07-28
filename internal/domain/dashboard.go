@@ -123,6 +123,24 @@ type PlatformStats struct {
 	ChargebackRatio float64       `json:"chargebackRatio"`
 }
 
+// Transaction is one row of the unified merchant activity feed returned by GET
+// /v1/transactions: a UNION of card payments, PromptPay (QR) payments, and
+// paid wallet checkout sessions, newest first. Source identifies which table
+// the row came from ("card"|"promptpay"|"wallet"); Method is the specific
+// payment method (e.g. "card", "promptpay_dynamic", "truemoney"). Amounts are
+// minor units (no decimal conversion — all three source tables already store
+// amount_minor BIGINT).
+type Transaction struct {
+	ID          uuid.UUID `json:"id"`
+	Source      string    `json:"source"`
+	Method      string    `json:"method"`
+	AmountMinor int64     `json:"amount_minor"`
+	Currency    string    `json:"currency"`
+	Status      string    `json:"status"`
+	Reference   string    `json:"reference"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 // AuditEntry is one immutable audit-log row returned by GET
 // /v1/admin/audit-log.
 type AuditEntry struct {
