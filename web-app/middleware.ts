@@ -22,6 +22,7 @@ export const config = {
     "/dashboard/:path*",
     "/transactions/:path*",
     "/payouts/:path*",
+    "/disputes/:path*",
     "/settings/:path*",
     "/links/:path*",
     "/developers/:path*",

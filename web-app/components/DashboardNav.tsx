@@ -5,6 +5,7 @@ export default function DashboardNav({ active }: { active?: string }) {
     { href: "/dashboard", label: "หน้าหลัก" },
     { href: "/transactions", label: "ธุรกรรม" },
     { href: "/payouts", label: "การจ่ายเงิน" },
+    { href: "/disputes", label: "ข้อโต้แย้ง" },
     { href: "/links", label: "ลิงก์ชำระเงิน" },
     { href: "/developers", label: "นักพัฒนา" },
     { href: "/settings", label: "ตั้งค่า" },
