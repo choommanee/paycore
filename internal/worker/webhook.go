@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -124,7 +125,9 @@ func (w *WebhookWorker) post(ctx context.Context, url string, payload []byte) er
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Signature", w.sign(payload))
+	for k, v := range w.signedHeaders(payload, time.Now().Unix()) {
+		req.Header.Set(k, v)
+	}
 
 	resp, err := w.client.Do(req)
 	if err != nil {
@@ -137,11 +140,36 @@ func (w *WebhookWorker) post(ctx context.Context, url string, payload []byte) er
 	return nil
 }
 
-// sign returns the hex-encoded HMAC-SHA256 of the payload using the signing key.
-func (w *WebhookWorker) sign(payload []byte) string {
+// signedHeaders returns the HMAC-SHA256 signature headers merchants use to verify
+// a delivery is authentic and not replayed:
+//
+//	X-Signature         : sha256=<hex HMAC(secret, body)>                 (legacy, body only)
+//	X-PayCore-Timestamp : <unix seconds>
+//	X-PayCore-Signature : t=<unix>,v1=<hex HMAC(secret, "<unix>.<body>")> (replay-resistant)
+//
+// The v1 signature binds the timestamp into the MAC (the Stripe scheme): a
+// receiver recomputes HMAC over "<t>.<rawBody>", compares in constant time, and
+// rejects deliveries whose t is outside a tolerance window — so a captured
+// payload cannot be replayed later without the secret. The legacy X-Signature is
+// kept so existing receivers keep working.
+func (w *WebhookWorker) signedHeaders(payload []byte, ts int64) map[string]string {
+	tsStr := strconv.FormatInt(ts, 10)
+	signed := make([]byte, 0, len(tsStr)+1+len(payload))
+	signed = append(signed, tsStr...)
+	signed = append(signed, '.')
+	signed = append(signed, payload...)
+	return map[string]string{
+		"X-Signature":         "sha256=" + w.hmacHex(payload),
+		"X-PayCore-Timestamp": tsStr,
+		"X-PayCore-Signature": "t=" + tsStr + ",v1=" + w.hmacHex(signed),
+	}
+}
+
+// hmacHex is the hex-encoded HMAC-SHA256 of b under the signing key.
+func (w *WebhookWorker) hmacHex(b []byte) string {
 	mac := hmac.New(sha256.New, w.signingKey)
-	mac.Write(payload)
-	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	mac.Write(b)
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // backoffFor returns an exponential backoff (base * 2^(attempt-1)) capped at 1h.

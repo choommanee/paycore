@@ -199,3 +199,23 @@ make docker          # postgres + app ด้วย docker compose
 - **Transport (prod):** เมื่อ `ENV=production` server จะ **ปฏิเสธการ start** ถ้าไม่ได้ตั้ง TLS
   (`TLS_CERT_FILE`+`TLS_KEY_FILE`) และไม่ได้ตั้ง `TLS_TERMINATED_UPSTREAM=true` เพื่อยืนยันว่ามี
   upstream (LB/mesh) terminate TLS ให้ — ไม่ยอมให้ serve cleartext เงียบ ๆ ใน prod
+
+## Webhook signatures (HMAC-SHA256)
+
+Every outbound webhook is signed so you can verify it came from PayCore and was not replayed. Headers:
+
+- `X-PayCore-Timestamp: <unix seconds>`
+- `X-PayCore-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<rawBody>")>` — the standard, replay-resistant signature (timestamp is bound into the MAC).
+- `X-Signature: sha256=<hex HMAC-SHA256(secret, rawBody)>` — legacy body-only signature, kept for compatibility.
+
+`secret` is the signing secret shown once when you set your webhook URL (Settings → Webhook). Verify by recomputing `v1` over `"<t>.<rawBody>"`, comparing in **constant time**, and rejecting deliveries whose `t` is outside a tolerance window (e.g. ±5 min):
+
+```python
+import hmac, hashlib, time
+def verify(raw_body: bytes, header_sig: str, header_ts: str, secret: str, tol=300) -> bool:
+    if abs(time.time() - int(header_ts)) > tol:      # reject stale/replayed deliveries
+        return False
+    parts = dict(p.split("=", 1) for p in header_sig.split(","))
+    expected = hmac.new(secret.encode(), f"{parts['t']}.".encode() + raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, parts["v1"])
+```
