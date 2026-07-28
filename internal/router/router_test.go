@@ -43,6 +43,9 @@ func (f fakeMerchantSvc) StatsSeries(context.Context, uuid.UUID, int) (*domain.S
 func (f fakeMerchantSvc) ListSettlements(context.Context, uuid.UUID, int) ([]*domain.Settlement, error) {
 	return []*domain.Settlement{}, nil
 }
+func (f fakeMerchantSvc) ListTransactions(context.Context, uuid.UUID, int32, int32) ([]*domain.Transaction, error) {
+	return []*domain.Transaction{}, nil
+}
 func (f fakeMerchantSvc) RotateAPIKey(context.Context, uuid.UUID) (*domain.RotatedKey, error) {
 	return &domain.RotatedKey{APIKey: "sk_new"}, nil
 }

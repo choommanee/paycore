@@ -13,7 +13,7 @@ import (
 // session middleware (pc_session cookie) gating GET /v1/auth/me; it has no
 // effect unless h.Auth is wired. merchantAuth is the combined session-cookie-OR-
 // API-key middleware gating the merchant dashboard routes (/v1/me, /v1/stats,
-// /v1/stats/series, /v1/settlements, /v1/disputes), /v1/payment-links (no effect unless
+// /v1/stats/series, /v1/settlements, /v1/disputes, /v1/transactions), /v1/payment-links (no effect unless
 // h.PaymentLink is wired), and the read/refund /v1/payments routes. adminAuth
 // gates the /v1/admin operator console
 // (X-Admin-Key, constant-time compare). rateLimit is a per-merchant limiter
@@ -65,6 +65,10 @@ func Setup(app *fiber.App, h *handler.Handlers, auth, sessionAuth, merchantAuth,
 	v1.Get("/stats", merchantAuth, h.Merchant.Stats)
 	v1.Get("/stats/series", merchantAuth, h.Merchant.StatsSeries)
 	v1.Get("/settlements", merchantAuth, h.Merchant.Settlements)
+	// Unified transaction feed (card + PromptPay + wallet) for the dashboard;
+	// /v1/payments alone only covers card. Same auth as the other dashboard
+	// reads: a session cookie OR an API key.
+	v1.Get("/transactions", merchantAuth, h.Merchant.ListTransactions)
 	v1.Get("/disputes", merchantAuth, h.Dispute.ListByMerchant)
 
 	// Dashboard human auth (Google OIDC + session cookie). Public except /me.

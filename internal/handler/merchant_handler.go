@@ -162,6 +162,22 @@ func (h *MerchantHandler) Settlements(c *fiber.Ctx) error {
 	return domain.Success(c, rows)
 }
 
+// ListTransactions godoc
+// @Summary  Unified transaction feed (card + PromptPay + wallet), newest first
+// @Router   /v1/transactions [get]
+func (h *MerchantHandler) ListTransactions(c *fiber.Ctx) error {
+	mid, ok := middleware.MerchantIDFromCtx(c)
+	if !ok {
+		return domain.Error(c, fiber.StatusUnauthorized, "UNAUTHORIZED", "merchant not authenticated")
+	}
+	limit, offset := paginate(c)
+	items, err := h.svc.ListTransactions(c.Context(), mid, limit, offset)
+	if err != nil {
+		return err
+	}
+	return domain.Success(c, items)
+}
+
 // RotateKey godoc
 // @Summary  Issue a new API key (returned once), invalidating the old key
 // @Router   /v1/me/rotate-key [post]
