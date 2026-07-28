@@ -101,6 +101,10 @@ func main() {
 		log.Fatal().Err(err).Msg("init card vault kms")
 	}
 	vault := crypto.NewVault(kms)
+	// SecretBox reuses the same KMS/envelope scheme to seal arbitrary application
+	// secrets (per-merchant webhook signing secret) retrievably, so the outbound
+	// worker can sign each delivery with the merchant's own key.
+	secretBox := crypto.NewSecretBox(kms)
 
 	// Prometheus instruments (payments-by-status counter, handler latency
 	// histogram) served at GET /metrics.
@@ -151,6 +155,13 @@ func main() {
 	// Merchant onboarding/lookup + API-key resolution, chargeback/disputes, and
 	// the platform (admin) read models.
 	merchantSvc := service.NewMerchantService(repo, logger)
+	// Persist per-merchant webhook secrets as ciphertext so deliveries can be
+	// signed with the merchant's own key (see the webhook worker below).
+	if mw, ok := merchantSvc.(interface {
+		WithWebhookSecrets(service.SecretSealer) service.MerchantService
+	}); ok {
+		merchantSvc = mw.WithWebhookSecrets(secretBox)
+	}
 	disputeSvc := service.NewDisputeService(repo, logger)
 	adminSvc := service.NewAdminService(repo, logger)
 
@@ -273,7 +284,7 @@ func main() {
 		worker.StartAll(workerCtx, logger,
 			worker.NewSettlementWorker(repo, time.Hour, 24*time.Hour, cfg.SettlementFeeBps, logger),
 			worker.NewReconciliationWorker(repo, reporter, time.Hour, 24*time.Hour, logger),
-			worker.NewWebhookWorker(repo, cfg.WebhookSigningSecret, cfg.WebhookDefaultURL, 15*time.Second, int32(cfg.WebhookMaxAttempts), logger), // #nosec G115 -- WebhookMaxAttempts is clamped to [1,100] in config.validate
+			worker.NewWebhookWorker(repo, secretBox, cfg.WebhookSigningSecret, cfg.WebhookDefaultURL, 15*time.Second, int32(cfg.WebhookMaxAttempts), logger), // #nosec G115 -- WebhookMaxAttempts is clamped to [1,100] in config.validate
 		)
 	}
 

@@ -17,14 +17,26 @@ import (
 	"github.com/yourco/payment-gateway/internal/repository"
 )
 
+// secretOpener decrypts a merchant's envelope-encrypted webhook signing secret.
+// Satisfied by crypto.SecretBox. Kept as a narrow interface so the worker does
+// not depend on the crypto package directly.
+type secretOpener interface {
+	Open(ctx context.Context, ciphertext []byte) ([]byte, error)
+}
+
 // WebhookWorker delivers pending webhook_events to merchant endpoints. Each POST
-// is signed with an HMAC-SHA256 of the raw JSON body in the X-Signature header so
-// merchants can verify authenticity. Delivery is retried with exponential
-// backoff up to maxAttempts, after which the event is marked failed.
+// is signed with an HMAC-SHA256 of the raw JSON body so merchants can verify
+// authenticity. Each delivery is signed with the TARGET MERCHANT'S own signing
+// secret (decrypted from webhook_secret_enc) when one is set, so a merchant can
+// verify with the whsec_ returned by SetWebhook (Stripe-style per-tenant key
+// isolation); deliveries for merchants with no secret fall back to the global
+// signingKey. Delivery is retried with exponential backoff up to maxAttempts,
+// after which the event is marked failed.
 type WebhookWorker struct {
 	repo        repository.Querier
 	client      *http.Client
-	signingKey  []byte
+	signingKey  []byte        // global fallback secret (default endpoint / no per-merchant secret)
+	secrets     secretOpener  // decrypts per-merchant secrets; nil => always use signingKey
 	defaultURL  string        // fallback endpoint when the event has no target_url
 	interval    time.Duration
 	batchSize   int32
@@ -34,12 +46,15 @@ type WebhookWorker struct {
 }
 
 // NewWebhookWorker wires the outbound webhook delivery worker. signingKey is the
-// shared HMAC secret; defaultURL is used when an event row carries no target_url.
-func NewWebhookWorker(repo repository.Querier, signingKey, defaultURL string, interval time.Duration, maxAttempts int32, log zerolog.Logger) *WebhookWorker {
+// global fallback HMAC secret; secrets decrypts per-merchant signing secrets
+// (may be nil in dev/scaffolding to always use signingKey); defaultURL is used
+// when an event row carries no target_url.
+func NewWebhookWorker(repo repository.Querier, secrets secretOpener, signingKey, defaultURL string, interval time.Duration, maxAttempts int32, log zerolog.Logger) *WebhookWorker {
 	return &WebhookWorker{
 		repo:        repo,
 		client:      &http.Client{Timeout: 10 * time.Second},
 		signingKey:  []byte(signingKey),
+		secrets:     secrets,
 		defaultURL:  defaultURL,
 		interval:    interval,
 		batchSize:   50,
@@ -86,7 +101,7 @@ func (w *WebhookWorker) deliver(ctx context.Context, ev repository.WebhookEvent)
 		return
 	}
 
-	err := w.post(ctx, url, ev.Payload)
+	err := w.post(ctx, url, ev.Payload, w.signingKeyFor(ctx, ev.MerchantID))
 	if err == nil {
 		if derr := w.repo.MarkWebhookDelivered(ctx, id); derr != nil {
 			w.log.Error().Err(derr).Msg("mark webhook delivered")
@@ -117,15 +132,37 @@ func (w *WebhookWorker) deliver(ctx context.Context, ev repository.WebhookEvent)
 	}
 }
 
-// post signs and delivers the payload. A 2xx is success; anything else is an
-// error that triggers retry/backoff.
-func (w *WebhookWorker) post(ctx context.Context, url string, payload []byte) error {
+// signingKeyFor resolves the HMAC key used to sign a merchant's delivery. It
+// decrypts the merchant's own webhook secret (webhook_secret_enc) when present,
+// so the merchant can verify with the whsec_ they were issued; otherwise it
+// falls back to the global signing key (default endpoint / merchant with no
+// secret set). A decrypt failure is logged (never the secret itself) and the
+// global key is used so a single corrupt row does not wedge delivery.
+func (w *WebhookWorker) signingKeyFor(ctx context.Context, merchantID pgtype.UUID) []byte {
+	if w.secrets == nil || !merchantID.Valid {
+		return w.signingKey
+	}
+	enc, err := w.repo.GetMerchantWebhookSigningKey(ctx, merchantID)
+	if err != nil || len(enc) == 0 {
+		return w.signingKey // no per-merchant secret (or lookup failed): global key
+	}
+	secret, err := w.secrets.Open(ctx, enc)
+	if err != nil {
+		w.log.Error().Str("merchant_id", uuidStr(merchantID)).Msg("decrypt merchant webhook secret failed; using global key")
+		return w.signingKey
+	}
+	return secret
+}
+
+// post signs and delivers the payload with the given HMAC key. A 2xx is success;
+// anything else is an error that triggers retry/backoff.
+func (w *WebhookWorker) post(ctx context.Context, url string, payload, key []byte) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	for k, v := range w.signedHeaders(payload, time.Now().Unix()) {
+	for k, v := range signedHeaders(key, payload, time.Now().Unix()) {
 		req.Header.Set(k, v)
 	}
 
@@ -152,22 +189,22 @@ func (w *WebhookWorker) post(ctx context.Context, url string, payload []byte) er
 // rejects deliveries whose t is outside a tolerance window — so a captured
 // payload cannot be replayed later without the secret. The legacy X-Signature is
 // kept so existing receivers keep working.
-func (w *WebhookWorker) signedHeaders(payload []byte, ts int64) map[string]string {
+func signedHeaders(key, payload []byte, ts int64) map[string]string {
 	tsStr := strconv.FormatInt(ts, 10)
 	signed := make([]byte, 0, len(tsStr)+1+len(payload))
 	signed = append(signed, tsStr...)
 	signed = append(signed, '.')
 	signed = append(signed, payload...)
 	return map[string]string{
-		"X-Signature":         "sha256=" + w.hmacHex(payload),
+		"X-Signature":         "sha256=" + hmacHex(key, payload),
 		"X-PayCore-Timestamp": tsStr,
-		"X-PayCore-Signature": "t=" + tsStr + ",v1=" + w.hmacHex(signed),
+		"X-PayCore-Signature": "t=" + tsStr + ",v1=" + hmacHex(key, signed),
 	}
 }
 
-// hmacHex is the hex-encoded HMAC-SHA256 of b under the signing key.
-func (w *WebhookWorker) hmacHex(b []byte) string {
-	mac := hmac.New(sha256.New, w.signingKey)
+// hmacHex is the hex-encoded HMAC-SHA256 of b under key.
+func hmacHex(key, b []byte) string {
+	mac := hmac.New(sha256.New, key)
 	mac.Write(b)
 	return hex.EncodeToString(mac.Sum(nil))
 }

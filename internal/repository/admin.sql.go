@@ -56,7 +56,7 @@ func (q *Queries) ListAllDisputes(ctx context.Context, arg ListAllDisputesParams
 
 const listAllMerchants = `-- name: ListAllMerchants :many
 
-SELECT id, name, status, api_key_hash, mcc, settlement_currency, created_at, updated_at, webhook_url, webhook_secret_hash FROM merchants
+SELECT id, name, status, api_key_hash, mcc, settlement_currency, created_at, updated_at, webhook_url, webhook_secret_hash, webhook_secret_enc FROM merchants
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2
 `
@@ -90,6 +90,7 @@ func (q *Queries) ListAllMerchants(ctx context.Context, arg ListAllMerchantsPara
 			&i.UpdatedAt,
 			&i.WebhookUrl,
 			&i.WebhookSecretHash,
+			&i.WebhookSecretEnc,
 		); err != nil {
 			return nil, err
 		}

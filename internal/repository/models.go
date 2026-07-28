@@ -72,6 +72,7 @@ type Merchant struct {
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 	WebhookUrl         *string            `json:"webhook_url"`
 	WebhookSecretHash  *string            `json:"webhook_secret_hash"`
+	WebhookSecretEnc   []byte             `json:"webhook_secret_enc"`
 }
 
 type MerchantUser struct {

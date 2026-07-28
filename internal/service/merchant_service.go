@@ -44,14 +44,33 @@ type MerchantService interface {
 	SetWebhook(ctx context.Context, id uuid.UUID, url string) (*domain.WebhookConfig, error)
 }
 
+// SecretSealer envelope-encrypts a secret so it can be stored retrievably (as
+// ciphertext) and later decrypted to sign a delivery. Satisfied by
+// crypto.SecretBox. Kept as a narrow interface so the service does not depend on
+// the crypto package directly.
+type SecretSealer interface {
+	Seal(ctx context.Context, plaintext []byte) ([]byte, error)
+}
+
 type merchantService struct {
-	repo repository.Querier
-	log  zerolog.Logger
+	repo    repository.Querier
+	secrets SecretSealer // nil => webhook secret stored as hash only (no per-tenant enc)
+	log     zerolog.Logger
 }
 
 // NewMerchantService wires the merchant service.
 func NewMerchantService(repo repository.Querier, log zerolog.Logger) MerchantService {
 	return &merchantService{repo: repo, log: log.With().Str("service", "merchant").Logger()}
+}
+
+// WithWebhookSecrets attaches the sealer used to store per-merchant webhook
+// signing secrets as ciphertext (envelope-encrypted). When set, SetWebhook
+// persists webhook_secret_enc so the outbound worker can sign each delivery with
+// the merchant's own secret. Mirrors the optional-dependency setter pattern used
+// by the payment service. Returns the service for chaining.
+func (s *merchantService) WithWebhookSecrets(sealer SecretSealer) MerchantService {
+	s.secrets = sealer
+	return s
 }
 
 // Onboard creates a merchant, generating an API key that is returned exactly
@@ -269,8 +288,11 @@ func (s *merchantService) RotateAPIKey(ctx context.Context, id uuid.UUID) (*doma
 }
 
 // SetWebhook stores the merchant's webhook URL and rotates its delivery signing
-// secret. Only the SHA-256 hash of the secret is persisted; the raw secret is
-// returned exactly once for the merchant to verify inbound deliveries against.
+// secret. The raw secret is returned exactly once for the merchant to verify
+// deliveries against. It is persisted as its SHA-256 hash AND (when a sealer is
+// configured) as an envelope-encrypted blob (webhook_secret_enc), so the
+// outbound worker can retrieve it and sign this merchant's deliveries with it.
+// The raw secret is never stored or logged in clear.
 func (s *merchantService) SetWebhook(ctx context.Context, id uuid.UUID, url string) (*domain.WebhookConfig, error) {
 	if s.repo == nil {
 		return nil, domain.ErrMerchantNotFound
@@ -280,10 +302,23 @@ func (s *merchantService) SetWebhook(ctx context.Context, id uuid.UUID, url stri
 		return nil, err
 	}
 	secretHash := middleware.HashAPIKey(secret)
+
+	// Envelope-encrypt the secret so the worker can sign with the merchant's own
+	// key (Stripe-style per-tenant isolation). Falls back to hash-only when no
+	// sealer is wired, keeping the column NULL and the worker on the global key.
+	var enc []byte
+	if s.secrets != nil {
+		enc, err = s.secrets.Seal(ctx, []byte(secret))
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	if _, err := s.repo.SetMerchantWebhook(ctx, repository.SetMerchantWebhookParams{
 		ID:                toPgUUID(id),
 		WebhookUrl:        strPtr(url),
 		WebhookSecretHash: strPtr(secretHash),
+		WebhookSecretEnc:  enc,
 	}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, domain.ErrMerchantNotFound

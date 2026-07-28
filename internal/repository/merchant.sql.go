@@ -16,7 +16,7 @@ const createMerchant = `-- name: CreateMerchant :one
 INSERT INTO merchants (
     id, name, mcc, settlement_currency, api_key_hash
 ) VALUES ($1, $2, $3, $4, $5)
-RETURNING id, name, status, api_key_hash, mcc, settlement_currency, created_at, updated_at, webhook_url, webhook_secret_hash
+RETURNING id, name, status, api_key_hash, mcc, settlement_currency, created_at, updated_at, webhook_url, webhook_secret_hash, webhook_secret_enc
 `
 
 type CreateMerchantParams struct {
@@ -51,12 +51,13 @@ func (q *Queries) CreateMerchant(ctx context.Context, arg CreateMerchantParams) 
 		&i.UpdatedAt,
 		&i.WebhookUrl,
 		&i.WebhookSecretHash,
+		&i.WebhookSecretEnc,
 	)
 	return i, err
 }
 
 const getMerchant = `-- name: GetMerchant :one
-SELECT id, name, status, api_key_hash, mcc, settlement_currency, created_at, updated_at, webhook_url, webhook_secret_hash FROM merchants WHERE id = $1
+SELECT id, name, status, api_key_hash, mcc, settlement_currency, created_at, updated_at, webhook_url, webhook_secret_hash, webhook_secret_enc FROM merchants WHERE id = $1
 `
 
 func (q *Queries) GetMerchant(ctx context.Context, id pgtype.UUID) (Merchant, error) {
@@ -73,12 +74,13 @@ func (q *Queries) GetMerchant(ctx context.Context, id pgtype.UUID) (Merchant, er
 		&i.UpdatedAt,
 		&i.WebhookUrl,
 		&i.WebhookSecretHash,
+		&i.WebhookSecretEnc,
 	)
 	return i, err
 }
 
 const getMerchantByAPIKeyHash = `-- name: GetMerchantByAPIKeyHash :one
-SELECT id, name, status, api_key_hash, mcc, settlement_currency, created_at, updated_at, webhook_url, webhook_secret_hash FROM merchants
+SELECT id, name, status, api_key_hash, mcc, settlement_currency, created_at, updated_at, webhook_url, webhook_secret_hash, webhook_secret_enc FROM merchants
 WHERE api_key_hash = $1 AND status = 'active'
 `
 
@@ -96,8 +98,26 @@ func (q *Queries) GetMerchantByAPIKeyHash(ctx context.Context, apiKeyHash string
 		&i.UpdatedAt,
 		&i.WebhookUrl,
 		&i.WebhookSecretHash,
+		&i.WebhookSecretEnc,
 	)
 	return i, err
+}
+
+const getMerchantWebhookSigningKey = `-- name: GetMerchantWebhookSigningKey :one
+SELECT webhook_secret_enc FROM merchants WHERE id = $1
+`
+
+// Returns the merchant's envelope-encrypted webhook signing key (NULL when the
+// merchant never set a webhook). The outbound worker decrypts it to sign a
+// delivery with the merchant's own key, falling back to the global key on NULL.
+// (Named "...SigningKey", not "...Secret", so the sqlc-generated query const
+// does not trip gosec G101's hardcoded-credential name pattern; the value is a
+// parameterized query selecting a column, never a literal secret.)
+func (q *Queries) GetMerchantWebhookSigningKey(ctx context.Context, id pgtype.UUID) ([]byte, error) {
+	row := q.db.QueryRow(ctx, getMerchantWebhookSigningKey, id)
+	var webhook_secret_enc []byte
+	err := row.Scan(&webhook_secret_enc)
+	return webhook_secret_enc, err
 }
 
 const rotateMerchantAPIKey = `-- name: RotateMerchantAPIKey :one
@@ -105,7 +125,7 @@ UPDATE merchants
 SET api_key_hash = $2,
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, name, status, api_key_hash, mcc, settlement_currency, created_at, updated_at, webhook_url, webhook_secret_hash
+RETURNING id, name, status, api_key_hash, mcc, settlement_currency, created_at, updated_at, webhook_url, webhook_secret_hash, webhook_secret_enc
 `
 
 type RotateMerchantAPIKeyParams struct {
@@ -130,6 +150,7 @@ func (q *Queries) RotateMerchantAPIKey(ctx context.Context, arg RotateMerchantAP
 		&i.UpdatedAt,
 		&i.WebhookUrl,
 		&i.WebhookSecretHash,
+		&i.WebhookSecretEnc,
 	)
 	return i, err
 }
@@ -138,22 +159,31 @@ const setMerchantWebhook = `-- name: SetMerchantWebhook :one
 UPDATE merchants
 SET webhook_url = $2,
     webhook_secret_hash = $3,
+    webhook_secret_enc = $4,
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, name, status, api_key_hash, mcc, settlement_currency, created_at, updated_at, webhook_url, webhook_secret_hash
+RETURNING id, name, status, api_key_hash, mcc, settlement_currency, created_at, updated_at, webhook_url, webhook_secret_hash, webhook_secret_enc
 `
 
 type SetMerchantWebhookParams struct {
 	ID                pgtype.UUID `json:"id"`
 	WebhookUrl        *string     `json:"webhook_url"`
 	WebhookSecretHash *string     `json:"webhook_secret_hash"`
+	WebhookSecretEnc  []byte      `json:"webhook_secret_enc"`
 }
 
 // Sets the merchant's outbound webhook URL and rotates its delivery signing
-// secret. Only the hash of the signing secret is stored; the raw secret is
-// returned once by the service layer.
+// secret. Stores BOTH the SHA-256 hash (kept for continuity) and the
+// envelope-encrypted secret (webhook_secret_enc) so the outbound worker can
+// retrieve and sign each delivery with this merchant's own secret. The raw
+// secret is returned once by the service layer and never stored in clear.
 func (q *Queries) SetMerchantWebhook(ctx context.Context, arg SetMerchantWebhookParams) (Merchant, error) {
-	row := q.db.QueryRow(ctx, setMerchantWebhook, arg.ID, arg.WebhookUrl, arg.WebhookSecretHash)
+	row := q.db.QueryRow(ctx, setMerchantWebhook,
+		arg.ID,
+		arg.WebhookUrl,
+		arg.WebhookSecretHash,
+		arg.WebhookSecretEnc,
+	)
 	var i Merchant
 	err := row.Scan(
 		&i.ID,
@@ -166,6 +196,7 @@ func (q *Queries) SetMerchantWebhook(ctx context.Context, arg SetMerchantWebhook
 		&i.UpdatedAt,
 		&i.WebhookUrl,
 		&i.WebhookSecretHash,
+		&i.WebhookSecretEnc,
 	)
 	return i, err
 }

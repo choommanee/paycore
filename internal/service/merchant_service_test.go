@@ -15,6 +15,7 @@ import (
 
 	"github.com/yourco/payment-gateway/internal/domain"
 	"github.com/yourco/payment-gateway/internal/middleware"
+	"github.com/yourco/payment-gateway/internal/pkg/crypto"
 	"github.com/yourco/payment-gateway/internal/repository"
 )
 
@@ -94,6 +95,86 @@ func (f *fakeMerchantRepo) StatsSeriesByDay(_ context.Context, arg repository.St
 		}
 	}
 	return out, nil
+}
+
+func (f *fakeMerchantRepo) SetMerchantWebhook(_ context.Context, arg repository.SetMerchantWebhookParams) (repository.Merchant, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m, ok := f.byID[key(arg.ID)]
+	if !ok {
+		return repository.Merchant{}, pgx.ErrNoRows
+	}
+	m.WebhookUrl = arg.WebhookUrl
+	m.WebhookSecretHash = arg.WebhookSecretHash
+	m.WebhookSecretEnc = arg.WebhookSecretEnc
+	f.byID[key(arg.ID)] = m
+	return m, nil
+}
+
+// ---- SetWebhook: per-merchant secret stored retrievably (Fix 2) ------------
+
+// TestSetWebhookStoresEncryptedSecret proves SetWebhook persists the signing
+// secret as an envelope-encrypted blob that decrypts back to the whsec_ returned
+// to the merchant (NOT a one-way hash), so the outbound worker can sign this
+// merchant's deliveries with the merchant's own key.
+func TestSetWebhookStoresEncryptedSecret(t *testing.T) {
+	repo := newFakeMerchantRepo()
+	kms, err := crypto.NewDevLocalKMS("dev-key")
+	if err != nil {
+		t.Fatalf("kms: %v", err)
+	}
+	box := crypto.NewSecretBox(kms)
+	svc := NewMerchantService(repo, zerolog.Nop()).(*merchantService).WithWebhookSecrets(box)
+
+	cred, err := svc.Onboard(context.Background(), domain.CreateMerchantRequest{Name: "Acme", SettlementCurrency: "THB"})
+	if err != nil {
+		t.Fatalf("Onboard: %v", err)
+	}
+	cfg, err := svc.SetWebhook(context.Background(), cred.Merchant.ID, "https://merchant.example.com/hook")
+	if err != nil {
+		t.Fatalf("SetWebhook: %v", err)
+	}
+	if !strings.HasPrefix(cfg.SigningSecret, "whsec_") {
+		t.Fatalf("signing secret has wrong prefix: %q", cfg.SigningSecret)
+	}
+
+	stored := repo.byID[cred.Merchant.ID]
+	if len(stored.WebhookSecretEnc) == 0 {
+		t.Fatal("webhook_secret_enc was not persisted")
+	}
+	if strings.Contains(string(stored.WebhookSecretEnc), cfg.SigningSecret) {
+		t.Fatal("stored blob leaks the raw secret (must be encrypted)")
+	}
+	// The stored blob must decrypt back to the exact secret handed to the merchant.
+	plain, err := box.Open(context.Background(), stored.WebhookSecretEnc)
+	if err != nil {
+		t.Fatalf("Open stored secret: %v", err)
+	}
+	if string(plain) != cfg.SigningSecret {
+		t.Fatalf("decrypted secret %q != returned secret %q", plain, cfg.SigningSecret)
+	}
+}
+
+// TestSetWebhookNoSealerStoresHashOnly asserts backward compatibility: without a
+// sealer, no encrypted secret is written (column stays NULL) and the worker will
+// fall back to the global key.
+func TestSetWebhookNoSealerStoresHashOnly(t *testing.T) {
+	repo := newFakeMerchantRepo()
+	svc := NewMerchantService(repo, zerolog.Nop())
+	cred, err := svc.Onboard(context.Background(), domain.CreateMerchantRequest{Name: "Acme", SettlementCurrency: "THB"})
+	if err != nil {
+		t.Fatalf("Onboard: %v", err)
+	}
+	if _, err := svc.SetWebhook(context.Background(), cred.Merchant.ID, "https://m.example.com/hook"); err != nil {
+		t.Fatalf("SetWebhook: %v", err)
+	}
+	stored := repo.byID[cred.Merchant.ID]
+	if len(stored.WebhookSecretEnc) != 0 {
+		t.Fatal("expected no encrypted secret when no sealer is configured")
+	}
+	if stored.WebhookSecretHash == nil || *stored.WebhookSecretHash == "" {
+		t.Fatal("expected the secret hash to still be persisted")
+	}
 }
 
 // ---- Onboard: key generation + hash-only persistence ----------------------

@@ -103,8 +103,9 @@ type SetWebhookRequest struct {
 }
 
 // WebhookConfig is returned by PUT /v1/me/webhook. The signing secret is
-// returned exactly once (only its hash is persisted); merchants verify inbound
-// webhook deliveries against it.
+// returned exactly once; it is persisted only as a hash plus an
+// envelope-encrypted blob, and the outbound worker signs this merchant's
+// deliveries with it, so the merchant verifies deliveries against this value.
 type WebhookConfig struct {
 	WebhookURL    string `json:"webhook_url"`
 	SigningSecret string `json:"signing_secret"` // shown once; store it securely

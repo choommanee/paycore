@@ -18,11 +18,10 @@ func refHMAC(secret, msg string) string {
 // replay-resistant v1 signature that binds the timestamp into the MAC.
 func TestSignedHeaders(t *testing.T) {
 	secret := "whsec_test_secret"
-	w := &WebhookWorker{signingKey: []byte(secret)}
 	body := []byte(`{"event":"payment.captured","id":"pay_1","amount":12900}`)
 	var ts int64 = 1700000000
 
-	h := w.signedHeaders(body, ts)
+	h := signedHeaders([]byte(secret), body, ts)
 
 	// Legacy body-only signature (kept for backward compatibility).
 	wantLegacy := "sha256=" + refHMAC(secret, string(body))
@@ -47,17 +46,17 @@ func TestSignedHeaders(t *testing.T) {
 // different timestamp produces a different v1 signature, so a captured delivery
 // cannot be replayed with a fresh timestamp without the secret.
 func TestSignedHeadersTimestampBinding(t *testing.T) {
-	w := &WebhookWorker{signingKey: []byte("whsec_x")}
+	key := []byte("whsec_x")
 	body := []byte(`{"id":"evt_1"}`)
 
-	a := w.signedHeaders(body, 1700000000)["X-PayCore-Signature"]
-	b := w.signedHeaders(body, 1700000001)["X-PayCore-Signature"]
+	a := signedHeaders(key, body, 1700000000)["X-PayCore-Signature"]
+	b := signedHeaders(key, body, 1700000001)["X-PayCore-Signature"]
 	if a == b {
 		t.Fatal("v1 signature must change when the timestamp changes (replay binding)")
 	}
 	// The legacy body-only signature, by contrast, is timestamp-independent.
-	la := w.signedHeaders(body, 1700000000)["X-Signature"]
-	lb := w.signedHeaders(body, 1700000001)["X-Signature"]
+	la := signedHeaders(key, body, 1700000000)["X-Signature"]
+	lb := signedHeaders(key, body, 1700000001)["X-Signature"]
 	if la != lb {
 		t.Fatal("legacy body-only signature must not depend on the timestamp")
 	}

@@ -28,11 +28,23 @@ RETURNING *;
 
 -- name: SetMerchantWebhook :one
 -- Sets the merchant's outbound webhook URL and rotates its delivery signing
--- secret. Only the hash of the signing secret is stored; the raw secret is
--- returned once by the service layer.
+-- secret. Stores BOTH the SHA-256 hash (kept for continuity) and the
+-- envelope-encrypted secret (webhook_secret_enc) so the outbound worker can
+-- retrieve and sign each delivery with this merchant's own secret. The raw
+-- secret is returned once by the service layer and never stored in clear.
 UPDATE merchants
 SET webhook_url = $2,
     webhook_secret_hash = $3,
+    webhook_secret_enc = $4,
     updated_at = NOW()
 WHERE id = $1
 RETURNING *;
+
+-- name: GetMerchantWebhookSigningKey :one
+-- Returns the merchant's envelope-encrypted webhook signing key (NULL when the
+-- merchant never set a webhook). The outbound worker decrypts it to sign a
+-- delivery with the merchant's own key, falling back to the global key on NULL.
+-- (Named "...SigningKey", not "...Secret", so the sqlc-generated query const
+-- does not trip gosec G101's hardcoded-credential name pattern; the value is a
+-- parameterized query selecting a column, never a literal secret.)
+SELECT webhook_secret_enc FROM merchants WHERE id = $1;

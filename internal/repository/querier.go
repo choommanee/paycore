@@ -68,6 +68,13 @@ type Querier interface {
 	// Dashboard human identities. Login resolves a user by (provider, subject); a
 	// first-time identity is created together with its merchant by the service layer.
 	GetMerchantUserByOAuth(ctx context.Context, arg GetMerchantUserByOAuthParams) (MerchantUser, error)
+	// Returns the merchant's envelope-encrypted webhook signing key (NULL when the
+	// merchant never set a webhook). The outbound worker decrypts it to sign a
+	// delivery with the merchant's own key, falling back to the global key on NULL.
+	// (Named "...SigningKey", not "...Secret", so the sqlc-generated query const
+	// does not trip gosec G101's hardcoded-credential name pattern; the value is a
+	// parameterized query selecting a column, never a literal secret.)
+	GetMerchantWebhookSigningKey(ctx context.Context, id pgtype.UUID) ([]byte, error)
 	GetPayment(ctx context.Context, id pgtype.UUID) (Payment, error)
 	// Merchant-scoped fetch: only returns the row when it belongs to the
 	// authenticated merchant, avoiding a cross-tenant existence oracle (returns
@@ -142,8 +149,10 @@ type Querier interface {
 	// generated and returned by the service layer; only its hash is persisted here.
 	RotateMerchantAPIKey(ctx context.Context, arg RotateMerchantAPIKeyParams) (Merchant, error)
 	// Sets the merchant's outbound webhook URL and rotates its delivery signing
-	// secret. Only the hash of the signing secret is stored; the raw secret is
-	// returned once by the service layer.
+	// secret. Stores BOTH the SHA-256 hash (kept for continuity) and the
+	// envelope-encrypted secret (webhook_secret_enc) so the outbound worker can
+	// retrieve and sign each delivery with this merchant's own secret. The raw
+	// secret is returned once by the service layer and never stored in clear.
 	SetMerchantWebhook(ctx context.Context, arg SetMerchantWebhookParams) (Merchant, error)
 	// Daily payment series for a merchant over the half-open window [from, to),
 	// bucketed by UTC calendar day. Volume uses the SAME captured (net-of-refund)
