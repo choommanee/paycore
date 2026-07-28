@@ -34,6 +34,14 @@ type fakeMerchantRepo struct {
 	// windows in one slice.
 	seriesRows []repository.StatsSeriesByDayRow
 	seriesErr  error
+
+	// txRows backs ListTransactionsByMerchant; txErr, when set, is returned
+	// instead. gotTxParams records the last call's params so a test can assert
+	// the merchant id was forwarded to every UNION branch and limit/offset were
+	// passed through untouched.
+	txRows      []repository.ListTransactionsByMerchantRow
+	txErr       error
+	gotTxParams repository.ListTransactionsByMerchantParams
 }
 
 func newFakeMerchantRepo() *fakeMerchantRepo {
@@ -95,6 +103,16 @@ func (f *fakeMerchantRepo) StatsSeriesByDay(_ context.Context, arg repository.St
 		}
 	}
 	return out, nil
+}
+
+func (f *fakeMerchantRepo) ListTransactionsByMerchant(_ context.Context, arg repository.ListTransactionsByMerchantParams) ([]repository.ListTransactionsByMerchantRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.gotTxParams = arg
+	if f.txErr != nil {
+		return nil, f.txErr
+	}
+	return f.txRows, nil
 }
 
 func (f *fakeMerchantRepo) SetMerchantWebhook(_ context.Context, arg repository.SetMerchantWebhookParams) (repository.Merchant, error) {
@@ -432,6 +450,119 @@ func TestStatsSeriesPropagatesRepoError(t *testing.T) {
 	repo.seriesErr = errors.New("db down")
 	svc := NewMerchantService(repo, zerolog.Nop())
 	if _, err := svc.StatsSeries(context.Background(), uuid.New(), 30); err == nil {
+		t.Fatal("expected the repo error to propagate")
+	}
+}
+
+// ---- ListTransactions (unified card + PromptPay + wallet feed) ------------
+
+// strp is a small helper to build a *string for a repository row's nullable
+// Reference column.
+func strp(s string) *string { return &s }
+
+// TestListTransactionsMapsMixedSourcesAndPreservesOrder seeds a fake repo
+// response with one row from each source (card, promptpay, wallet) already in
+// newest-first order (as the real UNION ... ORDER BY created_at DESC would
+// return) and asserts the service maps every field faithfully — including
+// amount_minor and currency straight through with no decimal conversion — and
+// preserves the repo's ordering rather than re-sorting.
+func TestListTransactionsMapsMixedSourcesAndPreservesOrder(t *testing.T) {
+	repo := newFakeMerchantRepo()
+	mid := uuid.New()
+
+	cardID, qrID, walletID := uuid.New(), uuid.New(), uuid.New()
+	now := time.Now().UTC()
+
+	repo.txRows = []repository.ListTransactionsByMerchantRow{
+		{
+			ID: toPgUUID(walletID), Source: "wallet", Method: "truemoney",
+			AmountMinor: 5000, Currency: "THB", Status: "paid",
+			Reference: nil, CreatedAt: pgtype.Timestamptz{Time: now, Valid: true},
+		},
+		{
+			ID: toPgUUID(qrID), Source: "promptpay", Method: "promptpay_dynamic",
+			AmountMinor: 9900, Currency: "THB", Status: "paid",
+			Reference: strp("QR-REF-1"), CreatedAt: pgtype.Timestamptz{Time: now.Add(-time.Minute), Valid: true},
+		},
+		{
+			ID: toPgUUID(cardID), Source: "card", Method: "card",
+			AmountMinor: 12900, Currency: "THB", Status: "captured",
+			Reference: strp("CARD-REF-1"), CreatedAt: pgtype.Timestamptz{Time: now.Add(-2 * time.Minute), Valid: true},
+		},
+	}
+
+	svc := NewMerchantService(repo, zerolog.Nop())
+	got, err := svc.ListTransactions(context.Background(), mid, 50, 0)
+	if err != nil {
+		t.Fatalf("ListTransactions: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("len(got)=%d want 3: %+v", len(got), got)
+	}
+
+	// Order must be preserved exactly as the repo returned it (wallet, promptpay, card).
+	wantIDs := []uuid.UUID{walletID, qrID, cardID}
+	for i, id := range wantIDs {
+		if got[i].ID != id {
+			t.Fatalf("got[%d].ID=%s want %s (order not preserved)", i, got[i].ID, id)
+		}
+	}
+
+	if got[0].Source != "wallet" || got[0].Method != "truemoney" || got[0].AmountMinor != 5000 || got[0].Reference != "" {
+		t.Fatalf("wallet row mismatch: %+v", got[0])
+	}
+	if got[1].Source != "promptpay" || got[1].Method != "promptpay_dynamic" || got[1].Currency != "THB" || got[1].Reference != "QR-REF-1" {
+		t.Fatalf("promptpay row mismatch: %+v", got[1])
+	}
+	if got[2].Source != "card" || got[2].Method != "card" || got[2].AmountMinor != 12900 || got[2].Status != "captured" || got[2].Reference != "CARD-REF-1" {
+		t.Fatalf("card row mismatch: %+v", got[2])
+	}
+}
+
+// TestListTransactionsScopesAllThreeUnionBranchesToMerchant asserts the
+// merchant id is forwarded to every one of the three UNIONed branches
+// (MerchantID/MerchantID_2/MerchantID_3), and limit/offset pass through
+// untouched — a merchant must never see another merchant's rows from any
+// branch.
+func TestListTransactionsScopesAllThreeUnionBranchesToMerchant(t *testing.T) {
+	repo := newFakeMerchantRepo()
+	svc := NewMerchantService(repo, zerolog.Nop())
+	mid := uuid.New()
+
+	if _, err := svc.ListTransactions(context.Background(), mid, 25, 10); err != nil {
+		t.Fatalf("ListTransactions: %v", err)
+	}
+
+	want := toPgUUID(mid)
+	got := repo.gotTxParams
+	if got.MerchantID != want || got.MerchantID_2 != want || got.MerchantID_3 != want {
+		t.Fatalf("merchant id not scoped to all three branches: %+v want %v", got, want)
+	}
+	if got.Limit != 25 || got.Offset != 10 {
+		t.Fatalf("Limit/Offset=%d/%d want 25/10 (must pass through untouched)", got.Limit, got.Offset)
+	}
+}
+
+// TestListTransactionsNoRepo mirrors TestStatsSeriesNoRepo: an unconfigured
+// repo must not panic, returning a harmless empty result.
+func TestListTransactionsNoRepo(t *testing.T) {
+	svc := NewMerchantService(nil, zerolog.Nop())
+	got, err := svc.ListTransactions(context.Background(), uuid.New(), 50, 0)
+	if err != nil {
+		t.Fatalf("ListTransactions: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("got=%+v want nil", got)
+	}
+}
+
+// TestListTransactionsPropagatesRepoError asserts a repo failure surfaces to
+// the caller rather than being swallowed.
+func TestListTransactionsPropagatesRepoError(t *testing.T) {
+	repo := newFakeMerchantRepo()
+	repo.txErr = errors.New("db down")
+	svc := NewMerchantService(repo, zerolog.Nop())
+	if _, err := svc.ListTransactions(context.Background(), uuid.New(), 50, 0); err == nil {
 		t.Fatal("expected the repo error to propagate")
 	}
 }

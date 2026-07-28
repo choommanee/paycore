@@ -37,6 +37,9 @@ type MerchantService interface {
 	StatsSeries(ctx context.Context, id uuid.UUID, days int) (*domain.StatsSeries, error)
 	// ListSettlements returns the merchant's payout rows, most recent first.
 	ListSettlements(ctx context.Context, id uuid.UUID, limit int) ([]*domain.Settlement, error)
+	// ListTransactions returns the merchant's unified activity feed (card +
+	// PromptPay + wallet), newest first, paginated by limit/offset.
+	ListTransactions(ctx context.Context, id uuid.UUID, limit, offset int32) ([]*domain.Transaction, error)
 	// RotateAPIKey issues a new API key (returned once) and invalidates the old.
 	RotateAPIKey(ctx context.Context, id uuid.UUID) (*domain.RotatedKey, error)
 	// SetWebhook sets the merchant webhook URL and rotates its signing secret,
@@ -265,6 +268,32 @@ func (s *merchantService) ListSettlements(ctx context.Context, id uuid.UUID, lim
 	return out, nil
 }
 
+// ListTransactions returns the merchant's unified activity feed (card
+// payments + PromptPay QR payments + paid wallet checkout sessions), newest
+// first. All three source tables store money as amount_minor BIGINT, so no
+// decimal conversion happens here; the mapping is a straight field copy.
+func (s *merchantService) ListTransactions(ctx context.Context, id uuid.UUID, limit, offset int32) ([]*domain.Transaction, error) {
+	if s.repo == nil {
+		return nil, nil
+	}
+	mid := toPgUUID(id)
+	rows, err := s.repo.ListTransactionsByMerchant(ctx, repository.ListTransactionsByMerchantParams{
+		MerchantID:   mid,
+		MerchantID_2: mid,
+		MerchantID_3: mid,
+		Limit:        limit,
+		Offset:       offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*domain.Transaction, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, toDomainTransaction(r))
+	}
+	return out, nil
+}
+
 // RotateAPIKey generates a fresh API key, persists only its hash (invalidating
 // the previous key), and returns the raw key exactly once.
 func (s *merchantService) RotateAPIKey(ctx context.Context, id uuid.UUID) (*domain.RotatedKey, error) {
@@ -444,6 +473,19 @@ func toDomainSettlement(r repository.Payout) *domain.Settlement {
 		PeriodStart:   r.PeriodStart.Time,
 		PeriodEnd:     r.PeriodEnd.Time,
 		CreatedAt:     r.CreatedAt.Time,
+	}
+}
+
+func toDomainTransaction(r repository.ListTransactionsByMerchantRow) *domain.Transaction {
+	return &domain.Transaction{
+		ID:          pgUUIDToUUID(r.ID),
+		Source:      r.Source,
+		Method:      r.Method,
+		AmountMinor: r.AmountMinor,
+		Currency:    r.Currency,
+		Status:      r.Status,
+		Reference:   ptrStr(r.Reference),
+		CreatedAt:   r.CreatedAt.Time,
 	}
 }
 
