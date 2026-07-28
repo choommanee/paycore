@@ -4,6 +4,7 @@ export default function DashboardNav({ active }: { active?: string }) {
   const items = [
     { href: "/dashboard", label: "หน้าหลัก" },
     { href: "/transactions", label: "ธุรกรรม" },
+    { href: "/payouts", label: "การจ่ายเงิน" },
     { href: "/links", label: "ลิงก์ชำระเงิน" },
     { href: "/settings", label: "ตั้งค่า" },
   ];
