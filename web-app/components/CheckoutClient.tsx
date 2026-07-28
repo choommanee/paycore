@@ -34,7 +34,7 @@ type CheckoutView = {
 // Labels for every method the registry can surface (Phase 3 card/promptpay +
 // Phase 4 wallet / redirect methods).
 const METHOD_LABEL: Record<string, string> = {
-  card: "บัตรเครดิต/เดบิต",
+  card: "บัตรเครดิต / เดบิต",
   promptpay: "PromptPay",
   mobile_banking: "Mobile Banking",
   truemoney: "TrueMoney Wallet",
@@ -47,6 +47,102 @@ const METHOD_LABEL: Record<string, string> = {
 // The six Phase 4 wallet / redirect methods share one mock flow.
 const WALLET_METHODS = ["mobile_banking", "truemoney", "shopeepay", "alipay", "wechat", "card_installment"];
 const isWallet = (m: string) => WALLET_METHODS.includes(m);
+
+// A small right-aligned brand mark for each method row, mirroring the landing
+// checkout mockup (card-brand circles, coloured wordmarks).
+function MethodMark({ method }: { method: string }) {
+  if (method === "card") {
+    return (
+      <svg viewBox="0 0 40 24" width="34" height="20" aria-hidden="true">
+        <circle cx="16" cy="12" r="9" fill="#EB001B" />
+        <circle cx="24" cy="12" r="9" fill="#F79E1B" opacity=".85" />
+      </svg>
+    );
+  }
+  const WORDMARK: Record<string, { text: string; color: string }> = {
+    promptpay: { text: "PromptPay", color: "#1a4b8f" },
+    truemoney: { text: "TrueMoney", color: "#e8792b" },
+    shopeepay: { text: "ShopeePay", color: "#ee4d2d" },
+    alipay: { text: "Alipay", color: "#1677ff" },
+    wechat: { text: "WeChat", color: "#09b83e" },
+    mobile_banking: { text: "Bank", color: "#185fa5" },
+    card_installment: { text: "ผ่อน", color: "#185fa5" },
+  };
+  const w = WORDMARK[method];
+  if (!w) return null;
+  return (
+    <span className="font-extrabold text-[13px] tracking-tight" style={{ color: w.color }}>
+      {w.text}
+    </span>
+  );
+}
+
+// Reusable outer shell so every checkout state (form, QR, wallet, terminal)
+// shares the exact same centered white card + secure footer.
+function CheckoutCard({ children, footer = true }: { children: React.ReactNode; footer?: boolean }) {
+  return (
+    <div className="w-full max-w-[440px] rounded-xl2 bg-paycore-surface border border-paycore-line shadow-cardlg p-6 sm:p-7">
+      {children}
+      {footer && <SecureFooter />}
+    </div>
+  );
+}
+
+function SecureFooter() {
+  return (
+    <div className="mt-5 flex items-center justify-center gap-1.5 text-[11px] text-paycore-muted">
+      <LockIcon className="w-3 h-3" />
+      <span>ชำระเงินอย่างปลอดภัยด้วย 3-D Secure · ข้อมูลบัตรผ่าน tokenization vault</span>
+    </div>
+  );
+}
+
+function LockIcon({ className = "w-4 h-4" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="4" y="11" width="16" height="9" rx="2" />
+      <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+    </svg>
+  );
+}
+
+// Merchant header: gradient monogram + name + item/title, with a TEST badge in
+// sandbox. Shared across the open + terminal states.
+function MerchantHeader({ view }: { view: CheckoutView }) {
+  const monogram = (view.merchant_name || "?").trim().charAt(0).toUpperCase();
+  return (
+    <div className="flex items-center gap-3">
+      <div
+        className="w-9 h-9 rounded-lg flex-none flex items-center justify-center text-white font-bold text-base"
+        style={{ background: "linear-gradient(135deg,#f0a63c,#e07c2b)" }}
+        aria-hidden="true"
+      >
+        {monogram}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-semibold text-paycore-text truncate">{view.merchant_name}</div>
+        {view.title && <div className="text-[11px] text-paycore-muted truncate">{view.title}</div>}
+      </div>
+      {view.sandbox && (
+        <span className="flex-none rounded-full bg-paycore-warnBg text-paycore-warn text-[10px] font-bold tracking-wide px-2.5 py-1 uppercase">
+          Test Mode
+        </span>
+      )}
+    </div>
+  );
+}
+
+function AmountBlock({ view }: { view: CheckoutView }) {
+  return (
+    <div className="text-center my-6">
+      <div className="text-xs text-paycore-muted">ยอดที่ต้องชำระ</div>
+      <div className="text-[38px] leading-tight font-semibold tracking-tight tabular-nums text-paycore-text">
+        {formatMoney(view.amount_minor, view.currency)}
+      </div>
+      {view.description && <p className="text-paycore-muted text-sm mt-1">{view.description}</p>}
+    </div>
+  );
+}
 
 export default function CheckoutClient({ publicId }: { publicId: string }) {
   const [view, setView] = useState<CheckoutView | null>(null);
@@ -81,7 +177,9 @@ export default function CheckoutClient({ publicId }: { publicId: string }) {
       const v: CheckoutView = env.data;
       setView(v);
       setToken(v.session_token ?? "");
-      if (v.allowed_methods.length === 1) setMethod(v.allowed_methods[0]);
+      // Preselect the first method so the card form (if card) shows by default,
+      // matching the landing mockup.
+      if (v.allowed_methods.length >= 1) setMethod(v.allowed_methods[0]);
     })();
   }, [publicId]);
 
@@ -114,10 +212,24 @@ export default function CheckoutClient({ publicId }: { publicId: string }) {
   }
 
   if (err && !view) {
-    return <div className="max-w-md w-full rounded-xl2 bg-paycore-surface border border-paycore-line shadow-cardlg p-6 mt-10">{err}</div>;
+    return (
+      <CheckoutCard footer={false}>
+        <div className="flex items-start gap-3 text-paycore-text2 text-sm">
+          <span className="text-lg leading-none">⚠️</span>
+          <p>{err}</p>
+        </div>
+      </CheckoutCard>
+    );
   }
   if (!view) {
-    return <div className="text-paycore-muted mt-10">กำลังโหลด…</div>;
+    return (
+      <CheckoutCard footer={false}>
+        <div className="flex items-center justify-center gap-2 py-8 text-paycore-muted text-sm">
+          <span className="w-4 h-4 rounded-full border-2 border-paycore-line border-t-paycore-primary animate-spin" />
+          กำลังโหลด…
+        </div>
+      </CheckoutCard>
+    );
   }
 
   // Any non-open session (requires_action for promptpay QR or a wallet mock, or a
@@ -127,81 +239,138 @@ export default function CheckoutClient({ publicId }: { publicId: string }) {
   }
 
   return (
-    <div className="max-w-md w-full rounded-xl2 bg-paycore-surface border border-paycore-line shadow-cardlg p-6 mt-10 space-y-5">
-      <header>
-        <p className="text-paycore-muted text-sm">{view.merchant_name}</p>
-        <h1 className="text-xl font-semibold">{view.title}</h1>
-        <p className="text-2xl font-bold mt-1">{formatMoney(view.amount_minor, view.currency)}</p>
-        {view.description && <p className="text-paycore-muted text-sm mt-1">{view.description}</p>}
-      </header>
+    <CheckoutCard>
+      <MerchantHeader view={view} />
+      <AmountBlock view={view} />
 
-      <div>
-        <p className="text-sm text-paycore-muted mb-2">เลือกวิธีชำระเงิน</p>
-        <div className="flex flex-wrap gap-2">
-          {view.allowed_methods.map((m) => (
+      {/* Method selector — full-width radio rows. */}
+      <div role="radiogroup" aria-label="เลือกวิธีชำระเงิน" className="flex flex-col gap-2">
+        {view.allowed_methods.map((m) => {
+          const selected = method === m;
+          return (
             <button
               key={m}
+              type="button"
+              role="radio"
+              aria-checked={selected}
               onClick={() => setMethod(m)}
-              className={`rounded-full px-4 py-2 text-sm border ${
-                method === m ? "bg-paycore-primary border-paycore-primary text-white" : "bg-paycore-surface2 border-paycore-line text-paycore-text2 hover:border-paycore-primary"
+              className={`flex items-center gap-3 rounded-xl border px-4 py-3 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-paycore-primary/60 ${
+                selected
+                  ? "border-paycore-primary bg-[#fbfdff] ring-2 ring-paycore-accentBg"
+                  : "border-paycore-line bg-paycore-surface hover:border-[#c9d3df]"
               }`}
             >
-              {METHOD_LABEL[m] ?? m}
+              <span
+                className={`w-[18px] h-[18px] rounded-full border-2 flex-none grid place-items-center ${
+                  selected ? "border-paycore-primary" : "border-paycore-line"
+                }`}
+              >
+                {selected && <span className="w-2 h-2 rounded-full bg-paycore-primary" />}
+              </span>
+              <span className="flex-1 text-[13px] font-semibold text-paycore-text">{METHOD_LABEL[m] ?? m}</span>
+              <span className="flex-none flex items-center">
+                <MethodMark method={m} />
+              </span>
             </button>
-          ))}
-        </div>
+          );
+        })}
       </div>
 
-      {method === "promptpay" && (
-        <PayMethodButton token={token} method="promptpay" label="สร้าง QR PromptPay" busyLabel="กำลังสร้าง QR…" onDone={setView} setErr={setErr} />
-      )}
+      {/* Per-method action area. */}
+      <div className="mt-5">
+        {method === "promptpay" && (
+          <PayMethodButton token={token} method="promptpay" label="สร้าง QR PromptPay" busyLabel="กำลังสร้าง QR…" onDone={setView} setErr={setErr} />
+        )}
 
-      {isWallet(method) && (
-        <>
-          {!view.sandbox && (
-            <p className="text-xs rounded-lg bg-paycore-warnBg text-paycore-warn px-3 py-2">
-              ช่องทางนี้ยังไม่พร้อมใช้งานบนระบบนี้
+        {isWallet(method) && (
+          <>
+            {!view.sandbox && (
+              <p className="text-xs rounded-lg bg-paycore-warnBg text-paycore-warn px-3 py-2">
+                ช่องทางนี้ยังไม่พร้อมใช้งานบนระบบนี้
+              </p>
+            )}
+            {view.sandbox && (
+              <PayMethodButton
+                token={token}
+                method={method}
+                label={`ดำเนินการต่อด้วย ${METHOD_LABEL[method] ?? method}`}
+                busyLabel="กำลังดำเนินการ…"
+                onDone={setView}
+                setErr={setErr}
+              />
+            )}
+          </>
+        )}
+
+        {method === "card" && view.sandbox && (
+          <form onSubmit={payCard} className="space-y-3">
+            <p className="flex items-start gap-2 text-xs rounded-lg bg-paycore-warnBg text-paycore-warn px-3 py-2">
+              <span className="leading-none">🔧</span>
+              <span>โหมดทดสอบ (Sandbox) — ใช้บัตรทดสอบเท่านั้น เช่น 4111 1111 1111 1111</span>
             </p>
-          )}
-          {view.sandbox && (
-            <PayMethodButton
-              token={token}
-              method={method}
-              label={`ดำเนินการต่อด้วย ${METHOD_LABEL[method] ?? method}`}
-              busyLabel="กำลังดำเนินการ…"
-              onDone={setView}
-              setErr={setErr}
-            />
-          )}
-        </>
-      )}
+            <div>
+              <label className="block text-[11px] font-medium text-paycore-muted mb-1">หมายเลขบัตร</label>
+              <input
+                value={cardNumber}
+                onChange={(e) => setCardNumber(e.target.value)}
+                inputMode="numeric"
+                placeholder="4242 4242 4242 4242"
+                className="w-full rounded-lg bg-paycore-surface2 border border-paycore-line px-3 py-2.5 text-sm tabular-nums placeholder:text-paycore-muted/70 focus:outline-none focus:border-paycore-primary focus:ring-2 focus:ring-paycore-accentBg"
+              />
+            </div>
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <label className="block text-[11px] font-medium text-paycore-muted mb-1">เดือน / ปี</label>
+                <div className="flex gap-2">
+                  <input
+                    value={expMonth}
+                    onChange={(e) => setExpMonth(e.target.value)}
+                    inputMode="numeric"
+                    placeholder="MM"
+                    className="w-1/2 rounded-lg bg-paycore-surface2 border border-paycore-line px-3 py-2.5 text-sm tabular-nums placeholder:text-paycore-muted/70 focus:outline-none focus:border-paycore-primary focus:ring-2 focus:ring-paycore-accentBg"
+                  />
+                  <input
+                    value={expYear}
+                    onChange={(e) => setExpYear(e.target.value)}
+                    inputMode="numeric"
+                    placeholder="YYYY"
+                    className="w-1/2 rounded-lg bg-paycore-surface2 border border-paycore-line px-3 py-2.5 text-sm tabular-nums placeholder:text-paycore-muted/70 focus:outline-none focus:border-paycore-primary focus:ring-2 focus:ring-paycore-accentBg"
+                  />
+                </div>
+              </div>
+              <div className="w-[92px]">
+                <label className="block text-[11px] font-medium text-paycore-muted mb-1">CVC</label>
+                <input
+                  value={cvv}
+                  onChange={(e) => setCvv(e.target.value)}
+                  inputMode="numeric"
+                  placeholder="•••"
+                  className="w-full rounded-lg bg-paycore-surface2 border border-paycore-line px-3 py-2.5 text-sm tabular-nums placeholder:text-paycore-muted/70 focus:outline-none focus:border-paycore-primary focus:ring-2 focus:ring-paycore-accentBg"
+                />
+              </div>
+            </div>
+            {err && <p className="text-paycore-danger text-sm">{err}</p>}
+            <button
+              disabled={busy}
+              className="w-full flex items-center justify-center gap-2 rounded-xl bg-paycore-primary hover:bg-paycore-primaryHover text-white font-semibold text-[15px] h-12 transition disabled:opacity-60"
+            >
+              {busy ? (
+                "กำลังชำระเงิน…"
+              ) : (
+                <>
+                  <LockIcon className="w-[17px] h-[17px]" />
+                  ชำระเงิน {formatMoney(view.amount_minor, view.currency)}
+                </>
+              )}
+            </button>
+          </form>
+        )}
 
-      {method === "card" && view.sandbox && (
-        <form onSubmit={payCard} className="space-y-3">
-          <p className="text-xs rounded-lg bg-paycore-warnBg text-paycore-warn px-3 py-2">
-            โหมดทดสอบ (Sandbox) — ใช้บัตรทดสอบเท่านั้น เช่น 4111 1111 1111 1111
-          </p>
-          <input value={cardNumber} onChange={(e) => setCardNumber(e.target.value)} inputMode="numeric"
-            placeholder="หมายเลขบัตร" className="w-full rounded-lg bg-paycore-surface2 border border-paycore-line px-3 py-2 focus:outline-none focus:border-paycore-primary" />
-          <div className="flex gap-2">
-            <input value={expMonth} onChange={(e) => setExpMonth(e.target.value)} inputMode="numeric"
-              placeholder="MM" className="w-1/3 rounded-lg bg-paycore-surface2 border border-paycore-line px-3 py-2 focus:outline-none focus:border-paycore-primary" />
-            <input value={expYear} onChange={(e) => setExpYear(e.target.value)} inputMode="numeric"
-              placeholder="YYYY" className="w-1/3 rounded-lg bg-paycore-surface2 border border-paycore-line px-3 py-2 focus:outline-none focus:border-paycore-primary" />
-            <input value={cvv} onChange={(e) => setCvv(e.target.value)} inputMode="numeric"
-              placeholder="CVV" className="w-1/3 rounded-lg bg-paycore-surface2 border border-paycore-line px-3 py-2 focus:outline-none focus:border-paycore-primary" />
-          </div>
-          {err && <p className="text-paycore-danger text-sm">{err}</p>}
-          <button disabled={busy} className="w-full rounded-lg bg-paycore-primary hover:bg-paycore-primaryHover text-white font-medium px-4 py-2 disabled:opacity-60">
-            {busy ? "กำลังชำระเงิน…" : `ชำระ ${formatMoney(view.amount_minor, view.currency)}`}
-          </button>
-        </form>
-      )}
-
-      {method === "card" && !view.sandbox && (
-        <p className="text-sm text-paycore-muted">การชำระด้วยบัตรยังไม่พร้อมใช้งานบนระบบนี้</p>
-      )}
-    </div>
+        {method === "card" && !view.sandbox && (
+          <p className="text-sm text-paycore-muted">การชำระด้วยบัตรยังไม่พร้อมใช้งานบนระบบนี้</p>
+        )}
+      </div>
+    </CheckoutCard>
   );
 }
 
@@ -245,7 +414,11 @@ function PayMethodButton({
     onDone(env.data as CheckoutView);
   }
   return (
-    <button onClick={start} disabled={busy} className="w-full rounded-lg bg-paycore-primary hover:bg-paycore-primaryHover text-white font-medium px-4 py-2 disabled:opacity-60">
+    <button
+      onClick={start}
+      disabled={busy}
+      className="w-full flex items-center justify-center gap-2 rounded-xl bg-paycore-primary hover:bg-paycore-primaryHover text-white font-semibold text-[15px] h-12 transition disabled:opacity-60"
+    >
       {busy ? busyLabel : label}
     </button>
   );
@@ -304,60 +477,90 @@ function CheckoutStatusView({ token, initial }: { token: string; initial: Checko
 
   if (view.status === "paid") {
     return (
-      <div className="max-w-md w-full rounded-xl2 bg-paycore-surface border border-paycore-line shadow-cardlg p-8 mt-10 text-center space-y-4">
-        <div className="text-4xl">✓</div>
-        <h1 className="text-xl font-semibold">ชำระเงินสำเร็จ</h1>
-        <p className="text-paycore-muted">{formatMoney(view.amount_minor, view.currency)}</p>
-        {view.return_url && (
-          <a href={view.return_url} className="inline-block rounded-lg bg-paycore-primary hover:bg-paycore-primaryHover text-white px-4 py-2">
-            กลับไปที่ร้านค้า
-          </a>
-        )}
-      </div>
+      <CheckoutCard footer={false}>
+        <div className="text-center py-2">
+          <div className="mx-auto w-14 h-14 rounded-full bg-paycore-successBg text-paycore-success grid place-items-center">
+            <svg viewBox="0 0 24 24" className="w-7 h-7" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M20 6 9 17l-5-5" />
+            </svg>
+          </div>
+          <h1 className="text-xl font-semibold mt-4 text-paycore-text">ชำระเงินสำเร็จ</h1>
+          <p className="text-[26px] font-semibold tabular-nums mt-1 text-paycore-text">{formatMoney(view.amount_minor, view.currency)}</p>
+          <p className="text-paycore-muted text-sm mt-1">{view.merchant_name}</p>
+          {view.return_url && (
+            <a
+              href={view.return_url}
+              className="mt-5 inline-flex w-full items-center justify-center rounded-xl bg-paycore-primary hover:bg-paycore-primaryHover text-white font-semibold h-12 transition"
+            >
+              กลับไปที่ร้านค้า
+            </a>
+          )}
+        </div>
+      </CheckoutCard>
     );
   }
   if (view.status === "expired" || view.status === "failed") {
     return (
-      <div className="max-w-md w-full rounded-xl2 bg-paycore-surface border border-paycore-line shadow-cardlg p-8 mt-10 text-center space-y-3">
-        <div className="text-4xl">⚠️</div>
-        <h1 className="text-lg font-semibold">
-          {view.status === "expired" ? "หมดเวลาชำระเงิน" : "ชำระเงินไม่สำเร็จ"}
-        </h1>
-        <p className="text-paycore-muted text-sm">โปรดลองอีกครั้ง</p>
-      </div>
+      <CheckoutCard footer={false}>
+        <div className="text-center py-2">
+          <div className="mx-auto w-14 h-14 rounded-full bg-paycore-dangerBg text-paycore-danger grid place-items-center">
+            <svg viewBox="0 0 24 24" className="w-7 h-7" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </div>
+          <h1 className="text-lg font-semibold mt-4 text-paycore-text">
+            {view.status === "expired" ? "หมดเวลาชำระเงิน" : "ชำระเงินไม่สำเร็จ"}
+          </h1>
+          <p className="text-paycore-muted text-sm mt-1">โปรดลองอีกครั้ง</p>
+        </div>
+      </CheckoutCard>
     );
   }
 
   // Wallet mock: simulate the PSP approve/decline screen (sandbox only).
   if (walletAwaiting) {
     return (
-      <div className="max-w-md w-full rounded-xl2 bg-paycore-surface border border-paycore-line shadow-cardlg p-6 mt-10 text-center space-y-4">
-        <p className="text-paycore-muted text-sm">{view.merchant_name}</p>
-        <h1 className="text-lg font-semibold">{METHOD_LABEL[view.selected_method ?? ""] ?? view.selected_method}</h1>
-        <p className="text-2xl font-bold">{formatMoney(view.amount_minor, view.currency)}</p>
-        <p className="text-xs rounded-lg bg-paycore-warnBg text-paycore-warn px-3 py-2">
-          โหมดทดสอบ (Sandbox) — จำลองหน้าอนุมัติของผู้ให้บริการ
+      <CheckoutCard>
+        <MerchantHeader view={view} />
+        <AmountBlock view={view} />
+        <p className="text-center text-sm font-semibold text-paycore-text -mt-3 mb-4">
+          {METHOD_LABEL[view.selected_method ?? ""] ?? view.selected_method}
+        </p>
+        <p className="flex items-start gap-2 text-xs rounded-lg bg-paycore-warnBg text-paycore-warn px-3 py-2 mb-4">
+          <span className="leading-none">🔧</span>
+          <span>โหมดทดสอบ (Sandbox) — จำลองหน้าอนุมัติของผู้ให้บริการ</span>
         </p>
         <div className="flex gap-2">
-          <button onClick={() => confirmMock(true)} className="flex-1 rounded-lg bg-paycore-primary hover:bg-paycore-primaryHover text-white font-medium px-4 py-2">
+          <button
+            onClick={() => confirmMock(true)}
+            className="flex-1 rounded-xl bg-paycore-primary hover:bg-paycore-primaryHover text-white font-semibold h-12 transition"
+          >
             อนุมัติการชำระเงิน
           </button>
-          <button onClick={() => confirmMock(false)} className="flex-1 rounded-lg border border-paycore-line text-paycore-text2 hover:bg-paycore-surface2 px-4 py-2">
+          <button
+            onClick={() => confirmMock(false)}
+            className="flex-1 rounded-xl border border-paycore-line text-paycore-text2 hover:bg-paycore-surface2 font-medium h-12 transition"
+          >
             ปฏิเสธ
           </button>
         </div>
-      </div>
+      </CheckoutCard>
     );
   }
 
   // PromptPay awaiting: show QR + amount.
   return (
-    <div className="max-w-md w-full rounded-xl2 bg-paycore-surface border border-paycore-line shadow-cardlg p-6 mt-10 text-center space-y-4">
-      <p className="text-paycore-muted text-sm">{view.merchant_name}</p>
-      <h1 className="text-lg font-semibold">สแกนเพื่อชำระด้วย PromptPay</h1>
-      <p className="text-2xl font-bold">{formatMoney(view.amount_minor, view.currency)}</p>
-      <div ref={qrBox} className="mx-auto bg-white p-3 rounded-lg inline-block" style={{ minHeight: 220, minWidth: 220 }} />
-      <p className="text-paycore-muted text-xs">รอการยืนยันการชำระเงิน…</p>
-    </div>
+    <CheckoutCard>
+      <MerchantHeader view={view} />
+      <AmountBlock view={view} />
+      <p className="text-center text-sm font-semibold text-paycore-text -mt-3 mb-4">สแกนเพื่อชำระด้วย PromptPay</p>
+      <div className="flex justify-center">
+        <div ref={qrBox} className="bg-white p-3 rounded-xl border border-paycore-line" style={{ minHeight: 220, minWidth: 220 }} />
+      </div>
+      <p className="flex items-center justify-center gap-2 text-paycore-muted text-xs mt-4">
+        <span className="w-3 h-3 rounded-full border-2 border-paycore-line border-t-paycore-primary animate-spin" />
+        รอการยืนยันการชำระเงิน…
+      </p>
+    </CheckoutCard>
   );
 }

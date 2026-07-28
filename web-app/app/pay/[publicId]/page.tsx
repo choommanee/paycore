@@ -5,7 +5,7 @@ import CheckoutClient from "@/components/CheckoutClient";
 // (copied into /public in Task 8) exposes a global `QRCode`; loaded here once.
 export default function PayPage({ params }: { params: { publicId: string } }) {
   return (
-    <main className="min-h-screen bg-paycore-bg text-paycore-text flex items-start justify-center p-4">
+    <main className="min-h-screen bg-paycore-bg text-paycore-text flex items-center justify-center p-4 py-10">
       <Script src="/qrcode.min.js" strategy="afterInteractive" />
       <CheckoutClient publicId={params.publicId} />
     </main>
