@@ -145,6 +145,13 @@ type Querier interface {
 	// secret. Only the hash of the signing secret is stored; the raw secret is
 	// returned once by the service layer.
 	SetMerchantWebhook(ctx context.Context, arg SetMerchantWebhookParams) (Merchant, error)
+	// Daily payment series for a merchant over the half-open window [from, to),
+	// bucketed by UTC calendar day. Volume uses the SAME captured (net-of-refund)
+	// definition as MerchantStats (captured/partial_refunded/refunded rows only);
+	// count is every payment created that day regardless of status. Days with no
+	// payments are simply absent from the result set — the service zero-fills them
+	// so the dashboard sparkline has one point per day.
+	StatsSeriesByDay(ctx context.Context, arg StatsSeriesByDayParams) ([]StatsSeriesByDayRow, error)
 	TouchMerchantUserLogin(ctx context.Context, id pgtype.UUID) error
 	UpdateCheckoutSession(ctx context.Context, arg UpdateCheckoutSessionParams) (CheckoutSession, error)
 	UpdateDisputeStatus(ctx context.Context, arg UpdateDisputeStatusParams) (Dispute, error)

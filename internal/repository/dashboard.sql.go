@@ -189,3 +189,57 @@ func (q *Queries) MerchantStats(ctx context.Context, arg MerchantStatsParams) (M
 	)
 	return i, err
 }
+
+const statsSeriesByDay = `-- name: StatsSeriesByDay :many
+SELECT
+    date_trunc('day', created_at)::date AS day,
+    COALESCE(SUM(
+        CASE WHEN status IN ('captured', 'partial_refunded', 'refunded')
+             THEN captured_amount_minor ELSE 0 END
+    ), 0)::BIGINT AS volume_minor,
+    COUNT(*)::BIGINT AS count
+FROM payments
+WHERE merchant_id = $1
+  AND created_at >= $2
+  AND created_at < $3
+GROUP BY 1
+ORDER BY 1
+`
+
+type StatsSeriesByDayParams struct {
+	MerchantID  pgtype.UUID        `json:"merchant_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	CreatedAt_2 pgtype.Timestamptz `json:"created_at_2"`
+}
+
+type StatsSeriesByDayRow struct {
+	Day         pgtype.Date `json:"day"`
+	VolumeMinor int64       `json:"volume_minor"`
+	Count       int64       `json:"count"`
+}
+
+// Daily payment series for a merchant over the half-open window [from, to),
+// bucketed by UTC calendar day. Volume uses the SAME captured (net-of-refund)
+// definition as MerchantStats (captured/partial_refunded/refunded rows only);
+// count is every payment created that day regardless of status. Days with no
+// payments are simply absent from the result set — the service zero-fills them
+// so the dashboard sparkline has one point per day.
+func (q *Queries) StatsSeriesByDay(ctx context.Context, arg StatsSeriesByDayParams) ([]StatsSeriesByDayRow, error) {
+	rows, err := q.db.Query(ctx, statsSeriesByDay, arg.MerchantID, arg.CreatedAt, arg.CreatedAt_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []StatsSeriesByDayRow
+	for rows.Next() {
+		var i StatsSeriesByDayRow
+		if err := rows.Scan(&i.Day, &i.VolumeMinor, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

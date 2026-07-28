@@ -36,6 +36,27 @@ WHERE merchant_id = $1
   AND created_at >= $2
   AND created_at <= $3;
 
+-- name: StatsSeriesByDay :many
+-- Daily payment series for a merchant over the half-open window [from, to),
+-- bucketed by UTC calendar day. Volume uses the SAME captured (net-of-refund)
+-- definition as MerchantStats (captured/partial_refunded/refunded rows only);
+-- count is every payment created that day regardless of status. Days with no
+-- payments are simply absent from the result set — the service zero-fills them
+-- so the dashboard sparkline has one point per day.
+SELECT
+    date_trunc('day', created_at)::date AS day,
+    COALESCE(SUM(
+        CASE WHEN status IN ('captured', 'partial_refunded', 'refunded')
+             THEN captured_amount_minor ELSE 0 END
+    ), 0)::BIGINT AS volume_minor,
+    COUNT(*)::BIGINT AS count
+FROM payments
+WHERE merchant_id = $1
+  AND created_at >= $2
+  AND created_at < $3
+GROUP BY 1
+ORDER BY 1;
+
 -- name: CountDisputesByMerchant :one
 -- Chargeback count for a merchant over the same window, used to derive the
 -- chargeback ratio against total payment count.
