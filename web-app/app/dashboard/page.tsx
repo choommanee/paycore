@@ -1,7 +1,13 @@
 import { redirect } from "next/navigation";
 import { serverGet } from "@/lib/api";
-import { formatMoney, formatDecimalMoney } from "@/lib/format";
+import { formatMoney } from "@/lib/format";
 import DashboardNav from "@/components/DashboardNav";
+import {
+  MethodChip,
+  StatusPill,
+  shortDate,
+  type Transaction,
+} from "@/components/TxPresentation";
 
 type AuthMe = { email: string; name: string; merchant_name: string; merchant_id: string };
 
@@ -19,15 +25,6 @@ type Series = {
   series: SeriesPoint[];
   totals: { volume_minor: number; count: number };
   trend: { volume_pct: number; count_pct: number };
-};
-
-type Payment = {
-  id: string;
-  amount: string;
-  status: string;
-  card_brand?: string;
-  card_last4?: string;
-  created_at: string;
 };
 
 function pct(fraction: number): string {
@@ -120,48 +117,12 @@ function TrendChip({ pctValue, invert = false }: { pctValue: number; invert?: bo
   );
 }
 
-// --- payment presentation ---------------------------------------------------
-const STATUS_META: Record<string, { label: string; bg: string; fg: string }> = {
-  captured: { label: "Captured", bg: "#e1f5ee", fg: "#0f6e56" },
-  authorized: { label: "Authorized", bg: "#e6f1fb", fg: "#0c447c" },
-  requires_action: { label: "Pending", bg: "#fdf3e1", fg: "#8a5a0b" },
-  refunded: { label: "Refunded", bg: "#f3e2f6", fg: "#7a2a86" },
-  partial_refunded: { label: "Partial refund", bg: "#f3e2f6", fg: "#7a2a86" },
-  failed: { label: "Failed", bg: "#fcebeb", fg: "#a32d2d" },
-  voided: { label: "Voided", bg: "#fcebeb", fg: "#a32d2d" },
-};
-
-function statusMeta(status: string) {
-  return STATUS_META[status] ?? { label: status, bg: "#eef1f5", fg: "#374151" };
-}
-
-function methodLabel(p: Payment): string {
-  if (p.card_brand && p.card_last4) {
-    const brand = p.card_brand.charAt(0).toUpperCase() + p.card_brand.slice(1);
-    return `${brand} •••• ${p.card_last4}`;
-  }
-  if (p.card_last4) return `บัตร •••• ${p.card_last4}`;
-  return "บัตร";
-}
-
-function shortDate(iso: string): string {
-  const d = new Date(iso);
-  const now = new Date();
-  const sameDay = d.toDateString() === now.toDateString();
-  if (sameDay) {
-    return `วันนี้ ${new Intl.DateTimeFormat("th-TH", { hour: "2-digit", minute: "2-digit" }).format(d)}`;
-  }
-  const diffDays = Math.floor((now.getTime() - d.getTime()) / 86_400_000);
-  if (diffDays >= 1 && diffDays <= 6) return `${diffDays} วันก่อน`;
-  return new Intl.DateTimeFormat("th-TH", { day: "numeric", month: "short" }).format(d);
-}
-
 export default async function DashboardHome() {
-  const [meRes, statsRes, seriesRes, paymentsRes] = await Promise.all([
+  const [meRes, statsRes, seriesRes, txRes] = await Promise.all([
     serverGet("/auth/me"),
     serverGet("/stats"),
     serverGet("/stats/series?days=30"),
-    serverGet("/payments?limit=6"),
+    serverGet("/transactions?limit=6"),
   ]);
   if (meRes.status === 401 || statsRes.status === 401) redirect("/login");
   if (!meRes.ok) throw new Error(`auth/me failed: ${meRes.status}`);
@@ -169,7 +130,7 @@ export default async function DashboardHome() {
   const me: AuthMe = (await meRes.json()).data;
   const s: Stats = (await statsRes.json()).data;
   const series: Series | null = seriesRes.ok ? (await seriesRes.json()).data : null;
-  const payments: Payment[] = paymentsRes.ok ? ((await paymentsRes.json()).data ?? []) : [];
+  const transactions: Transaction[] = txRes.ok ? ((await txRes.json()).data ?? []) : [];
 
   const volumeSeries = series?.series.map((p) => p.volume_minor) ?? [];
   const countSeries = series?.series.map((p) => p.count) ?? [];
@@ -274,44 +235,37 @@ export default async function DashboardHome() {
                 </tr>
               </thead>
               <tbody>
-                {payments.length === 0 && (
+                {transactions.length === 0 && (
                   <tr>
                     <td colSpan={4} className="px-5 py-8 text-center text-sm text-paycore-muted">
                       ยังไม่มีธุรกรรม
                     </td>
                   </tr>
                 )}
-                {payments.map((p) => {
-                  const meta = statusMeta(p.status);
-                  return (
-                    <tr key={p.id} className="border-b border-paycore-line2 last:border-b-0">
-                      <td className="px-5 py-3">
-                        <div className="font-mono text-xs text-paycore-text">{p.id.slice(0, 8)}…</div>
-                        <div className="text-[11px] text-paycore-muted">{shortDate(p.created_at)}</div>
-                      </td>
-                      <td className="px-5 py-3 text-paycore-text2">{methodLabel(p)}</td>
-                      <td className="px-5 py-3">
-                        <span
-                          className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold"
-                          style={{ backgroundColor: meta.bg, color: meta.fg }}
-                        >
-                          <span className="h-1.5 w-1.5 rounded-full bg-current opacity-90" />
-                          {meta.label}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3 text-right font-semibold tabular-nums text-paycore-text">
-                        {formatDecimalMoney(p.amount)}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {transactions.map((t) => (
+                  <tr key={t.id} className="border-b border-paycore-line2 last:border-b-0">
+                    <td className="px-5 py-3">
+                      <div className="font-mono text-xs text-paycore-text">{t.id.slice(0, 8)}…</div>
+                      <div className="text-[11px] text-paycore-muted">{shortDate(t.created_at)}</div>
+                    </td>
+                    <td className="px-5 py-3">
+                      <MethodChip tx={t} />
+                    </td>
+                    <td className="px-5 py-3">
+                      <StatusPill status={t.status} dot />
+                    </td>
+                    <td className="px-5 py-3 text-right font-semibold tabular-nums text-paycore-text">
+                      {formatMoney(t.amount_minor, t.currency)}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         </section>
 
         <p className="mt-4 text-xs text-paycore-muted">
-          ตัวเลขและรายการคำนวณจากการชำระด้วยบัตร (card) ในรอบ 30 วันล่าสุด
+          ธุรกรรมล่าสุดครอบคลุมทุกช่องทาง (บัตร, PromptPay, e-wallet) · สถิติด้านบนคำนวณจากการชำระด้วยบัตรในรอบ 30 วันล่าสุด
         </p>
 
         <div className="mt-4 flex gap-4">
