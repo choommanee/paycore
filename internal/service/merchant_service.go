@@ -31,6 +31,10 @@ type MerchantService interface {
 	Profile(ctx context.Context, id uuid.UUID) (*domain.MerchantProfile, error)
 	// Stats aggregates KPIs from payments over [from, to] for a merchant.
 	Stats(ctx context.Context, id uuid.UUID, from, to time.Time) (*domain.MerchantStats, error)
+	// StatsSeries returns a zero-filled daily series for the last `days` UTC
+	// calendar days (clamped to [1, 90]) plus totals and the trend vs the
+	// immediately preceding window of equal length, for the dashboard sparkline.
+	StatsSeries(ctx context.Context, id uuid.UUID, days int) (*domain.StatsSeries, error)
 	// ListSettlements returns the merchant's payout rows, most recent first.
 	ListSettlements(ctx context.Context, id uuid.UUID, limit int) ([]*domain.Settlement, error)
 	// RotateAPIKey issues a new API key (returned once) and invalidates the old.
@@ -172,6 +176,56 @@ func (s *merchantService) Stats(ctx context.Context, id uuid.UUID, from, to time
 	}, nil
 }
 
+// StatsSeries returns a zero-filled daily series for the last `days` UTC
+// calendar days (ending today, inclusive) plus totals and the trend vs the
+// immediately preceding window of equal length. Volume uses the same captured
+// (net-of-refund) definition as Stats. Trend fractions are 0 when the previous
+// window has no activity to compare against (divide-by-zero guard).
+func (s *merchantService) StatsSeries(ctx context.Context, id uuid.UUID, days int) (*domain.StatsSeries, error) {
+	days = clampDays(days)
+	if s.repo == nil {
+		return &domain.StatsSeries{Days: days}, nil
+	}
+
+	// Half-open window ending at the start of tomorrow (UTC) so "today" is
+	// fully included; from is `days` calendar days back. The previous window is
+	// the equal-length window immediately before it.
+	to := truncateToUTCDay(time.Now().UTC()).AddDate(0, 0, 1)
+	from := to.AddDate(0, 0, -days)
+	prevTo := from
+	prevFrom := prevTo.AddDate(0, 0, -days)
+
+	rows, err := s.repo.StatsSeriesByDay(ctx, repository.StatsSeriesByDayParams{
+		MerchantID:  toPgUUID(id),
+		CreatedAt:   pgtype.Timestamptz{Time: from, Valid: true},
+		CreatedAt_2: pgtype.Timestamptz{Time: to, Valid: true},
+	})
+	if err != nil {
+		return nil, err
+	}
+	prevRows, err := s.repo.StatsSeriesByDay(ctx, repository.StatsSeriesByDayParams{
+		MerchantID:  toPgUUID(id),
+		CreatedAt:   pgtype.Timestamptz{Time: prevFrom, Valid: true},
+		CreatedAt_2: pgtype.Timestamptz{Time: prevTo, Valid: true},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	series, totals := zeroFillSeries(from, days, rows)
+	prevTotals := sumSeriesRows(prevRows)
+
+	return &domain.StatsSeries{
+		Days:   days,
+		Series: series,
+		Totals: totals,
+		Trend: domain.StatsSeriesTrend{
+			VolumePct: pctChange(totals.VolumeMinor, prevTotals.VolumeMinor),
+			CountPct:  pctChange(totals.Count, prevTotals.Count),
+		},
+	}, nil
+}
+
 // ListSettlements returns the merchant's payout rows, most recent first.
 func (s *merchantService) ListSettlements(ctx context.Context, id uuid.UUID, limit int) ([]*domain.Settlement, error) {
 	if s.repo == nil {
@@ -276,6 +330,70 @@ func clampLimit(limit int) int32 {
 		return 500
 	}
 	return int32(limit)
+}
+
+// clampDays bounds a caller-supplied /v1/stats/series window into [1, 90],
+// defaulting to 30 when unset or non-positive.
+func clampDays(days int) int {
+	if days <= 0 {
+		return 30
+	}
+	if days > 90 {
+		return 90
+	}
+	return days
+}
+
+// truncateToUTCDay zeroes the time-of-day component, in UTC.
+func truncateToUTCDay(t time.Time) time.Time {
+	t = t.UTC()
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// pctChange returns (cur-prev)/prev as a fraction, guarding division by zero
+// (returns 0 when prev is 0, matching the dashboard's "no prior data" case).
+func pctChange(cur, prev int64) float64 {
+	if prev == 0 {
+		return 0
+	}
+	return float64(cur-prev) / float64(prev)
+}
+
+// zeroFillSeries builds one point per UTC calendar day in [from, from+days),
+// ascending, filling days absent from rows with zero volume/count. It also
+// returns the totals summed across the full window.
+func zeroFillSeries(from time.Time, days int, rows []repository.StatsSeriesByDayRow) ([]domain.StatsSeriesPoint, domain.StatsSeriesTotals) {
+	byDay := make(map[string]repository.StatsSeriesByDayRow, len(rows))
+	for _, r := range rows {
+		byDay[r.Day.Time.Format("2006-01-02")] = r
+	}
+
+	start := truncateToUTCDay(from)
+	series := make([]domain.StatsSeriesPoint, days)
+	var totals domain.StatsSeriesTotals
+	for i := 0; i < days; i++ {
+		key := start.AddDate(0, 0, i).Format("2006-01-02")
+		point := domain.StatsSeriesPoint{Date: key}
+		if r, ok := byDay[key]; ok {
+			point.VolumeMinor = r.VolumeMinor
+			point.Count = r.Count
+		}
+		series[i] = point
+		totals.VolumeMinor += point.VolumeMinor
+		totals.Count += point.Count
+	}
+	return series, totals
+}
+
+// sumSeriesRows totals raw (non-zero-filled) series rows, used for the
+// previous-window comparison where per-day granularity isn't needed.
+func sumSeriesRows(rows []repository.StatsSeriesByDayRow) domain.StatsSeriesTotals {
+	var totals domain.StatsSeriesTotals
+	for _, r := range rows {
+		totals.VolumeMinor += r.VolumeMinor
+		totals.Count += r.Count
+	}
+	return totals
 }
 
 func toDomainSettlement(r repository.Payout) *domain.Settlement {

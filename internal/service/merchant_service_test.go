@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -25,6 +26,13 @@ type fakeMerchantRepo struct {
 	byID      map[uuid.UUID]repository.Merchant
 	byHash    map[string]repository.Merchant
 	createErr error
+
+	// seriesRows backs StatsSeriesByDay: every call returns the subset of these
+	// rows whose day falls in [arg.CreatedAt, arg.CreatedAt_2), mimicking the SQL
+	// WHERE clause so a test can seed rows for both the current and previous
+	// windows in one slice.
+	seriesRows []repository.StatsSeriesByDayRow
+	seriesErr  error
 }
 
 func newFakeMerchantRepo() *fakeMerchantRepo {
@@ -71,6 +79,21 @@ func (f *fakeMerchantRepo) GetMerchantByAPIKeyHash(_ context.Context, hash strin
 		return repository.Merchant{}, pgx.ErrNoRows
 	}
 	return m, nil
+}
+
+func (f *fakeMerchantRepo) StatsSeriesByDay(_ context.Context, arg repository.StatsSeriesByDayParams) ([]repository.StatsSeriesByDayRow, error) {
+	if f.seriesErr != nil {
+		return nil, f.seriesErr
+	}
+	from, to := arg.CreatedAt.Time, arg.CreatedAt_2.Time
+	var out []repository.StatsSeriesByDayRow
+	for _, r := range f.seriesRows {
+		d := r.Day.Time
+		if !d.Before(from) && d.Before(to) {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 // ---- Onboard: key generation + hash-only persistence ----------------------
@@ -191,5 +214,143 @@ func TestGenerateAPIKeyUnique(t *testing.T) {
 	c2, _ := svc.Onboard(context.Background(), domain.CreateMerchantRequest{Name: "B", SettlementCurrency: "THB"})
 	if c1.APIKey == c2.APIKey {
 		t.Fatal("two onboardings minted the same API key")
+	}
+}
+
+// ---- StatsSeries ------------------------------------------------------------
+
+// utcDay truncates t to a UTC calendar day (00:00:00), matching how the
+// service and the (real) SQL query bucket rows.
+func utcDay(t time.Time) time.Time {
+	t = t.UTC()
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// TestStatsSeriesZeroFillsAndComputesTotals seeds two days of rows inside a
+// 3-day window (with a gap day that must be zero-filled) plus a row that only
+// falls inside the previous equal-length window, and asserts: the series is
+// ascending with one point per calendar day, the gap day is zero-filled,
+// totals sum the window, and trend compares against the previous window.
+func TestStatsSeriesZeroFillsAndComputesTotals(t *testing.T) {
+	repo := newFakeMerchantRepo()
+	svc := NewMerchantService(repo, zerolog.Nop())
+	mid := uuid.New()
+
+	today := utcDay(time.Now())
+	day := func(offset int) time.Time { return today.AddDate(0, 0, offset) }
+
+	repo.seriesRows = []repository.StatsSeriesByDayRow{
+		// Current window (last 3 days: today-2, today-1, today). today-1 is left
+		// out on purpose so it must come back zero-filled.
+		{Day: pgtype.Date{Time: day(-2), Valid: true}, VolumeMinor: 10000, Count: 2},
+		{Day: pgtype.Date{Time: day(0), Valid: true}, VolumeMinor: 5000, Count: 1},
+		// Falls only inside the previous 3-day window ([today-5, today-2)).
+		{Day: pgtype.Date{Time: day(-4), Valid: true}, VolumeMinor: 6000, Count: 3},
+	}
+
+	got, err := svc.StatsSeries(context.Background(), mid, 3)
+	if err != nil {
+		t.Fatalf("StatsSeries: %v", err)
+	}
+	if got.Days != 3 {
+		t.Fatalf("Days=%d want 3", got.Days)
+	}
+	if len(got.Series) != 3 {
+		t.Fatalf("len(Series)=%d want 3: %+v", len(got.Series), got.Series)
+	}
+
+	wantDates := []string{day(-2).Format("2006-01-02"), day(-1).Format("2006-01-02"), day(0).Format("2006-01-02")}
+	for i, p := range got.Series {
+		if p.Date != wantDates[i] {
+			t.Fatalf("Series[%d].Date=%q want %q (ascending order)", i, p.Date, wantDates[i])
+		}
+	}
+	if got.Series[0].VolumeMinor != 10000 || got.Series[0].Count != 2 {
+		t.Fatalf("Series[0]=%+v want {volume 10000 count 2}", got.Series[0])
+	}
+	if got.Series[1].VolumeMinor != 0 || got.Series[1].Count != 0 {
+		t.Fatalf("Series[1] (gap day) = %+v want zero-filled", got.Series[1])
+	}
+	if got.Series[2].VolumeMinor != 5000 || got.Series[2].Count != 1 {
+		t.Fatalf("Series[2]=%+v want {volume 5000 count 1}", got.Series[2])
+	}
+
+	if got.Totals.VolumeMinor != 15000 || got.Totals.Count != 3 {
+		t.Fatalf("Totals=%+v want {volume 15000 count 3}", got.Totals)
+	}
+
+	// prev window totals: volume 6000, count 3.
+	wantVolumePct := float64(15000-6000) / float64(6000)
+	if got.Trend.VolumePct != wantVolumePct {
+		t.Fatalf("Trend.VolumePct=%v want %v", got.Trend.VolumePct, wantVolumePct)
+	}
+	if got.Trend.CountPct != 0 { // 3 vs 3 -> unchanged
+		t.Fatalf("Trend.CountPct=%v want 0 (3 vs 3, unchanged)", got.Trend.CountPct)
+	}
+}
+
+// TestStatsSeriesPrevWindowZeroTrendIsZero asserts the divide-by-zero guard:
+// when the previous window has no activity, trend is 0 (not +Inf/NaN) even
+// though the current window has volume.
+func TestStatsSeriesPrevWindowZeroTrendIsZero(t *testing.T) {
+	repo := newFakeMerchantRepo()
+	svc := NewMerchantService(repo, zerolog.Nop())
+	mid := uuid.New()
+
+	repo.seriesRows = []repository.StatsSeriesByDayRow{
+		{Day: pgtype.Date{Time: utcDay(time.Now()), Valid: true}, VolumeMinor: 1000, Count: 1},
+	}
+
+	got, err := svc.StatsSeries(context.Background(), mid, 5)
+	if err != nil {
+		t.Fatalf("StatsSeries: %v", err)
+	}
+	if got.Totals.VolumeMinor != 1000 || got.Totals.Count != 1 {
+		t.Fatalf("Totals=%+v want {volume 1000 count 1}", got.Totals)
+	}
+	if got.Trend.VolumePct != 0 || got.Trend.CountPct != 0 {
+		t.Fatalf("Trend=%+v want zero (no prior-window activity to compare against)", got.Trend)
+	}
+}
+
+// TestStatsSeriesDaysClamp asserts days is clamped to [1, 90], defaulting to
+// 30 for a non-positive input.
+func TestStatsSeriesDaysClamp(t *testing.T) {
+	repo := newFakeMerchantRepo()
+	svc := NewMerchantService(repo, zerolog.Nop())
+	mid := uuid.New()
+
+	if got, err := svc.StatsSeries(context.Background(), mid, 0); err != nil || got.Days != 30 || len(got.Series) != 30 {
+		t.Fatalf("days=0 -> Days=%d len(Series)=%d err=%v want 30/30", got.Days, len(got.Series), err)
+	}
+	if got, err := svc.StatsSeries(context.Background(), mid, 500); err != nil || got.Days != 90 || len(got.Series) != 90 {
+		t.Fatalf("days=500 -> Days=%d len(Series)=%d err=%v want 90/90", got.Days, len(got.Series), err)
+	}
+	if got, err := svc.StatsSeries(context.Background(), mid, -1); err != nil || got.Days != 30 {
+		t.Fatalf("days=-1 -> Days=%d err=%v want 30", got.Days, err)
+	}
+}
+
+// TestStatsSeriesNoRepo mirrors TestOnboardNoRepoErrors / TestMerchantGetNoRepo:
+// an unconfigured repo must not panic, returning a harmless empty result.
+func TestStatsSeriesNoRepo(t *testing.T) {
+	svc := NewMerchantService(nil, zerolog.Nop())
+	got, err := svc.StatsSeries(context.Background(), uuid.New(), 30)
+	if err != nil {
+		t.Fatalf("StatsSeries: %v", err)
+	}
+	if got.Days != 30 || len(got.Series) != 0 {
+		t.Fatalf("got=%+v want Days=30, empty Series", got)
+	}
+}
+
+// TestStatsSeriesPropagatesRepoError asserts a repo failure on the current
+// window surfaces to the caller rather than being swallowed.
+func TestStatsSeriesPropagatesRepoError(t *testing.T) {
+	repo := newFakeMerchantRepo()
+	repo.seriesErr = errors.New("db down")
+	svc := NewMerchantService(repo, zerolog.Nop())
+	if _, err := svc.StatsSeries(context.Background(), uuid.New(), 30); err == nil {
+		t.Fatal("expected the repo error to propagate")
 	}
 }
