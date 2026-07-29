@@ -213,7 +213,17 @@ func main() {
 	// Public hosted checkout. The payment service (svc) satisfies Charger, the QR
 	// service satisfies QRIssuer, and the card vault satisfies Tokenizer. The card
 	// (raw PAN) path is gated on SANDBOX_MODE inside the service.
-	checkoutSvc := service.NewCheckoutService(repo, svc, qrSvc, vault, cfg.SandboxMode, logger)
+	//
+	// Crypto/stablecoin rail: a sandbox ThaiChain rail (chain id 7, stablecoin
+	// gas, fee-sponsored) enables the "thaichain" checkout method. It is wired only
+	// in sandbox — production needs a real chain-watcher to confirm deposits, so we
+	// pass nil there and the method is refused rather than surfacing an
+	// unconfirmable address. Deposit address / asset use the sandbox defaults.
+	var checkoutRail external.PaymentRail
+	if cfg.SandboxMode {
+		checkoutRail = external.NewThaiChainRailSandbox("", "")
+	}
+	checkoutSvc := service.NewCheckoutService(repo, svc, qrSvc, vault, checkoutRail, cfg.SandboxMode, logger)
 	h = h.WithCheckout(handler.NewCheckoutHandler(checkoutSvc, logger))
 
 	// Behind a trusted TLS-terminating upstream (Railway/Fly/LB) the socket peer

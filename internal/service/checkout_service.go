@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/yourco/payment-gateway/internal/domain"
+	"github.com/yourco/payment-gateway/internal/external"
 	"github.com/yourco/payment-gateway/internal/middleware"
 	"github.com/yourco/payment-gateway/internal/pkg/money"
 	"github.com/yourco/payment-gateway/internal/repository"
@@ -60,6 +61,7 @@ type checkoutService struct {
 	charger Charger
 	qr      QRIssuer
 	vault   Tokenizer
+	rail    external.PaymentRail
 	sandbox bool
 	log     zerolog.Logger
 }
@@ -67,13 +69,15 @@ type checkoutService struct {
 // NewCheckoutService wires the checkout service. sandbox gates the raw-PAN card
 // path: when false, card pay is refused (real hosted-fields tokenization is out
 // of scope). vault/charger/qr may be nil in scaffolding but are required for the
-// pay paths.
-func NewCheckoutService(repo repository.Querier, charger Charger, qr QRIssuer, vault Tokenizer, sandbox bool, log zerolog.Logger) CheckoutService {
+// pay paths. rail is the crypto/stablecoin settlement rail (nil disables the
+// "thaichain" method); it is used sandbox-only in this phase.
+func NewCheckoutService(repo repository.Querier, charger Charger, qr QRIssuer, vault Tokenizer, rail external.PaymentRail, sandbox bool, log zerolog.Logger) CheckoutService {
 	return &checkoutService{
 		repo:    repo,
 		charger: charger,
 		qr:      qr,
 		vault:   vault,
+		rail:    rail,
 		sandbox: sandbox,
 		log:     log.With().Str("service", "checkout").Logger(),
 	}
@@ -149,6 +153,15 @@ func (s *checkoutService) Get(ctx context.Context, token string) (*domain.Checko
 		row.Status == string(domain.CheckoutRequiresAction) && qr != nil {
 		view.QRPayload = qr.QRPayload
 	}
+	// Re-surface the on-chain instructions so a reloaded rail page can re-render
+	// the deposit address + memo. railInstructions is idempotent (keyed by session
+	// id) and never resets a settled charge.
+	if domain.IsRailMethod(row.SelectedMethod) &&
+		row.Status == string(domain.CheckoutRequiresAction) && s.rail != nil {
+		if instr, ierr := s.railInstructions(ctx, row); ierr == nil {
+			view.RailInstructions = instr
+		}
+	}
 	return view, nil
 }
 
@@ -191,6 +204,30 @@ func (s *checkoutService) syncStatus(ctx context.Context, row repository.Checkou
 		// Get can re-surface it without a second poll.
 		return row, qr, nil
 	}
+	// Crypto/stablecoin rail: poll the rail for on-chain finality.
+	if domain.IsRailMethod(row.SelectedMethod) && status == domain.CheckoutRequiresAction && s.rail != nil {
+		conf, err := s.rail.Confirm(ctx, pgUUIDToUUID(row.ID).String())
+		if err != nil {
+			return row, nil, nil // transient / charge not in memory: report no change, poll again
+		}
+		switch conf.Status {
+		case external.RailConfirmed:
+			updated, terr := s.transition(ctx, row, domain.CheckoutPaid)
+			if terr != nil {
+				return row, nil, terr
+			}
+			s.markLinkPaid(ctx, updated)
+			return updated, nil, nil
+		case external.RailFailed:
+			updated, err := s.transition(ctx, row, domain.CheckoutFailed)
+			return updated, nil, err
+		case external.RailExpired:
+			updated, err := s.transition(ctx, row, domain.CheckoutExpired)
+			return updated, nil, err
+		}
+		// pending / underpaid: stay in requires_action and poll again.
+		return row, nil, nil
+	}
 	return row, nil, nil
 }
 
@@ -226,8 +263,103 @@ func (s *checkoutService) Pay(ctx context.Context, token string, req domain.Chec
 		if domain.IsWalletMethod(req.Method) {
 			return s.payWallet(ctx, row, req)
 		}
+		// Crypto/stablecoin rails (e.g. ThaiChain) register an on-chain charge.
+		if domain.IsRailMethod(req.Method) {
+			return s.payThaiChain(ctx, row, req)
+		}
 		return nil, domain.ErrCheckoutMethodUnavailable
 	}
+}
+
+// payThaiChain registers a crypto/stablecoin charge on the PaymentRail and moves
+// the session to requires_action carrying the on-chain payment instructions
+// (deposit address + memo == session id + asset). It is SANDBOX-ONLY in this
+// phase: a real deploy confirms deposits via a chain-watcher, so with sandbox off
+// it refuses rather than surface an unconfirmable address. Like payWallet it
+// charges nothing here and reserves a single_use link so two sessions cannot both
+// complete the same link; the sandbox /confirm-mock endpoint simulates the
+// deposit and flips the session to paid (or failed, releasing the reservation).
+func (s *checkoutService) payThaiChain(ctx context.Context, row repository.CheckoutSession, req domain.CheckoutPayRequest) (*domain.CheckoutSessionView, error) {
+	if !s.sandbox || s.rail == nil {
+		return nil, domain.ErrCheckoutMethodUnavailable
+	}
+
+	// Reserve a single_use link BEFORE going to requires_action — identical to the
+	// card / wallet paths.
+	var reservedLink *repository.PaymentLink
+	if row.PaymentLinkID.Valid {
+		link, err := s.repo.GetPaymentLink(ctx, repository.GetPaymentLinkParams{
+			ID: row.PaymentLinkID, MerchantID: row.MerchantID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if link.LinkType == "single_use" {
+			consumed, cerr := s.repo.ConsumePaymentLinkIfActive(ctx, repository.ConsumePaymentLinkIfActiveParams{
+				ID: row.PaymentLinkID, MerchantID: row.MerchantID,
+			})
+			if cerr != nil {
+				if errors.Is(cerr, pgx.ErrNoRows) {
+					_, _ = s.transition(ctx, row, domain.CheckoutFailed)
+					return nil, domain.ErrCheckoutMethodUnavailable
+				}
+				return nil, cerr
+			}
+			reservedLink = &consumed
+		}
+	}
+
+	instr, err := s.railInstructions(ctx, row)
+	if err != nil {
+		s.releaseLinkReservation(ctx, reservedLink, row)
+		return nil, err
+	}
+
+	updated, err := s.repo.UpdateCheckoutSession(ctx, repository.UpdateCheckoutSessionParams{
+		ID:             row.ID,
+		Status:         string(domain.CheckoutRequiresAction),
+		SelectedMethod: req.Method,
+		PaymentID:      row.PaymentID,   // stays NULL
+		QrPaymentID:    row.QrPaymentID, // stays NULL
+		CustomerEmail:  strFallback(req.CustomerEmail, row.CustomerEmail),
+	})
+	if err != nil {
+		s.releaseLinkReservation(ctx, reservedLink, row)
+		return nil, err
+	}
+	view := s.buildView(ctx, updated, nil)
+	view.RailInstructions = instr
+	return view, nil
+}
+
+// railInstructions registers (idempotently) the rail charge for a session and
+// returns its public on-chain payment instructions. The charge is keyed by the
+// session id, which is also the transfer memo — so this is safe to call again on
+// a later Get to re-surface the instructions for a reloaded page (it never resets
+// an already-settled charge). Amount is the session amount; in this sandbox phase
+// the stablecoin amount tracks the fiat amount 1:1, a real deploy applies FX.
+func (s *checkoutService) railInstructions(ctx context.Context, row repository.CheckoutSession) (*domain.CheckoutRailInstructions, error) {
+	amount, err := money.FromMinor(row.AmountMinor, row.Currency)
+	if err != nil {
+		return nil, domain.ErrInvalidRequest
+	}
+	res, err := s.rail.CreateCharge(ctx, external.RailChargeRequest{
+		PaymentID: pgUUIDToUUID(row.ID).String(),
+		Amount:    amount,
+	})
+	if err != nil {
+		return nil, err
+	}
+	in := res.Instructions
+	return &domain.CheckoutRailInstructions{
+		Asset:        in.Asset,
+		Address:      in.Address,
+		Memo:         in.Memo,
+		ChainID:      in.ChainID,
+		FeeSponsored: in.FeeSponsored,
+		URI:          in.URI,
+		ExplorerURL:  external.ThaiChainExplorer,
+	}, nil
 }
 
 func (s *checkoutService) payPromptPay(ctx context.Context, row repository.CheckoutSession, req domain.CheckoutPayRequest) (*domain.CheckoutSessionView, error) {
@@ -449,21 +581,35 @@ func (s *checkoutService) ConfirmMock(ctx context.Context, token string, approve
 		_, _ = s.transition(ctx, row, domain.CheckoutExpired)
 		return nil, domain.ErrCheckoutSessionExpired
 	}
-	// Only a wallet session actually awaiting action can be confirmed. Anything
-	// else is an idempotent no-op returning the current view (double-submit, an
-	// already-terminal session, or a non-wallet requires_action like promptpay
+	// Only a wallet or crypto-rail session actually awaiting action can be
+	// confirmed. Anything else is an idempotent no-op returning the current view
+	// (double-submit, an already-terminal session, or a promptpay requires_action
 	// which confirms via the QR webhook instead).
-	if domain.CheckoutStatus(row.Status) != domain.CheckoutRequiresAction || !domain.IsWalletMethod(row.SelectedMethod) {
+	isWallet := domain.IsWalletMethod(row.SelectedMethod)
+	isRail := domain.IsRailMethod(row.SelectedMethod)
+	if domain.CheckoutStatus(row.Status) != domain.CheckoutRequiresAction || (!isWallet && !isRail) {
 		return s.Get(ctx, token)
 	}
 
 	if approve {
+		// For a crypto rail, approving simulates the on-chain deposit (sandbox
+		// payer-simulator) so the charge reaches finality before we mark paid. The
+		// deposited amount tracks the session amount, so it is never underpaid.
+		if isRail {
+			if sr, ok := s.rail.(external.SandboxRail); ok {
+				if amount, aerr := money.FromMinor(row.AmountMinor, row.Currency); aerr == nil {
+					if derr := sr.SimulateDeposit(pgUUIDToUUID(row.ID).String(), amount); derr != nil {
+						s.log.Warn().Err(derr).Msg("thaichain sandbox deposit failed")
+					}
+				}
+			}
+		}
 		updated, err := s.transition(ctx, row, domain.CheckoutPaid)
 		if err != nil {
 			return nil, err
 		}
-		// single_use link was already reserved (flipped to paid) in payWallet;
-		// this is an idempotent no-op for it and handles reusable (no-op) too.
+		// single_use link was already reserved (flipped to paid) in payWallet /
+		// payThaiChain; this is an idempotent no-op for it and handles reusable too.
 		s.markLinkPaid(ctx, updated)
 		return s.buildView(ctx, updated, nil), nil
 	}

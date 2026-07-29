@@ -54,6 +54,37 @@ func TestThaiChainRail_CreateChargeInstructions(t *testing.T) {
 	}
 }
 
+func TestThaiChainRail_ProviderRefIsPaymentIDAndIdempotent(t *testing.T) {
+	r := newRail()
+	req := RailChargeRequest{PaymentID: "sess_42", Amount: decimal.RequireFromString("10.00")}
+
+	first, err := r.CreateCharge(context.Background(), req)
+	if err != nil {
+		t.Fatalf("CreateCharge: %v", err)
+	}
+	// ProviderRef is the PaymentID: a caller that persists only the PaymentID can
+	// Confirm/SimulateDeposit without storing a separate rail handle.
+	if first.ProviderRef != "sess_42" {
+		t.Fatalf("ProviderRef = %q, want the PaymentID sess_42", first.ProviderRef)
+	}
+
+	// Settle it, then re-create with the same PaymentID: idempotent — the existing
+	// (settled) charge is returned, not reset.
+	if err := r.SimulateDeposit("sess_42", decimal.RequireFromString("10.00")); err != nil {
+		t.Fatalf("SimulateDeposit: %v", err)
+	}
+	if _, err := r.CreateCharge(context.Background(), req); err != nil {
+		t.Fatalf("idempotent CreateCharge: %v", err)
+	}
+	c, err := r.Confirm(context.Background(), "sess_42")
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	if c.Status != RailConfirmed {
+		t.Fatalf("status = %q, want confirmed (idempotent re-create must not reset settlement)", c.Status)
+	}
+}
+
 func TestThaiChainRail_CreateChargeValidates(t *testing.T) {
 	r := newRail()
 	if _, err := r.CreateCharge(context.Background(), RailChargeRequest{

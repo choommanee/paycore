@@ -7,7 +7,7 @@ import (
 
 func TestDisplayMethodsEmptyMeansAllSupported(t *testing.T) {
 	got := DisplayMethods(nil)
-	want := []string{"card", "promptpay", "mobile_banking", "truemoney", "shopeepay", "alipay", "wechat", "card_installment"}
+	want := []string{"card", "promptpay", "mobile_banking", "truemoney", "shopeepay", "alipay", "wechat", "card_installment", "thaichain"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("empty allowed = %v want %v", got, want)
 	}

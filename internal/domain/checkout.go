@@ -25,6 +25,26 @@ const (
 var CheckoutSupportedMethods = []string{
 	"card", "promptpay",
 	"mobile_banking", "truemoney", "shopeepay", "alipay", "wechat", "card_installment",
+	"thaichain",
+}
+
+// CheckoutRailMethods are crypto/stablecoin settlement rails handled by a
+// PaymentRail adapter (service.payThaiChain). Like the wallet methods they are
+// SANDBOX-gated: the session goes to requires_action carrying on-chain payment
+// instructions, and the sandbox-only /confirm-mock endpoint simulates the
+// on-chain deposit. In production (sandbox off) they are refused until a real
+// chain-watcher confirms deposits.
+var CheckoutRailMethods = []string{"thaichain"}
+
+// IsRailMethod reports whether m is a crypto/stablecoin rail method handled by a
+// PaymentRail adapter.
+func IsRailMethod(m string) bool {
+	for _, r := range CheckoutRailMethods {
+		if r == m {
+			return true
+		}
+	}
+	return false
 }
 
 // CheckoutWalletMethods are the Phase 4 e-wallet / redirect methods. They share a
@@ -89,7 +109,7 @@ type CardInput struct {
 // CheckoutPayRequest selects a method and carries its data. Card is required only
 // when Method == "card" (enforced in the service). Wallet methods carry no data.
 type CheckoutPayRequest struct {
-	Method        string     `json:"method" validate:"required,oneof=card promptpay mobile_banking truemoney shopeepay alipay wechat card_installment"`
+	Method        string     `json:"method" validate:"required,oneof=card promptpay mobile_banking truemoney shopeepay alipay wechat card_installment thaichain"`
 	Card          *CardInput `json:"card" validate:"omitempty"`
 	CustomerEmail string     `json:"customer_email" validate:"omitempty,email"`
 }
@@ -122,4 +142,22 @@ type CheckoutSessionView struct {
 	ReturnURL      string    `json:"return_url,omitempty"`
 	ExpiresAt      time.Time `json:"expires_at"`
 	Sandbox        bool      `json:"sandbox"` // card form is sandbox-only; drives the UI label
+	// RailInstructions is set only for a crypto/stablecoin rail session awaiting a
+	// deposit (selected_method in CheckoutRailMethods, status requires_action). It
+	// carries the on-chain payment instructions the payer needs.
+	RailInstructions *CheckoutRailInstructions `json:"rail_instructions,omitempty"`
+}
+
+// CheckoutRailInstructions is the public, secret-free on-chain payment
+// instruction surfaced to the checkout page for a crypto/stablecoin rail. It
+// carries no private keys — only where to send, what asset, and the memo that
+// reconciles the transfer back to this session.
+type CheckoutRailInstructions struct {
+	Asset        string `json:"asset"`         // settlement asset symbol, e.g. "USDC", "TCH"
+	Address      string `json:"address"`       // deposit address the payer sends to
+	Memo         string `json:"memo"`          // transfer memo (== session id) — REQUIRED for reconciliation
+	ChainID      int64  `json:"chain_id"`      // EVM chain id (ThaiChain = 7)
+	FeeSponsored bool   `json:"fee_sponsored"` // gas paid by the merchant — payer holds no gas token
+	URI          string `json:"uri,omitempty"` // wallet deep-link
+	ExplorerURL  string `json:"explorer_url,omitempty"`
 }

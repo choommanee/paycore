@@ -90,3 +90,13 @@ type PaymentRail interface {
 	// only reports RailConfirmed once the settlement is final.
 	Confirm(ctx context.Context, providerRef string) (*RailConfirmation, error)
 }
+
+// SandboxRail is an optional capability a PaymentRail may implement in sandbox
+// builds: it simulates an inbound settlement so a payer-simulator (the checkout
+// confirm-mock endpoint) can drive a charge to confirmed without moving real
+// funds. Production rails do not implement it. Callers type-assert:
+//
+//	if sr, ok := rail.(external.SandboxRail); ok { sr.SimulateDeposit(ref, amt) }
+type SandboxRail interface {
+	SimulateDeposit(providerRef string, paidAmount decimal.Decimal) error
+}

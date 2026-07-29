@@ -12,6 +12,7 @@ import (
 var ValidPaymentMethods = []string{
 	"card", "promptpay", "mobile_banking", "truemoney",
 	"shopeepay", "alipay", "wechat", "card_installment",
+	"thaichain",
 }
 
 // IsValidMethod reports whether m is a known payment-method slug.
@@ -31,7 +32,7 @@ type CreatePaymentLinkRequest struct {
 	Description    string     `json:"description" validate:"omitempty,max=2000"`
 	AmountMinor    int64      `json:"amount_minor" validate:"required,gt=0"`
 	Currency       string     `json:"currency" validate:"omitempty,len=3,alpha"`
-	AllowedMethods []string   `json:"allowed_methods" validate:"omitempty,dive,oneof=card promptpay mobile_banking truemoney shopeepay alipay wechat card_installment"`
+	AllowedMethods []string   `json:"allowed_methods" validate:"omitempty,dive,oneof=card promptpay mobile_banking truemoney shopeepay alipay wechat card_installment thaichain"`
 	LinkType       string     `json:"link_type" validate:"omitempty,oneof=single_use reusable"`
 	Reference      string     `json:"reference" validate:"omitempty,max=200"`
 	ImageURL       string     `json:"image_url" validate:"omitempty,http_url,max=500"`

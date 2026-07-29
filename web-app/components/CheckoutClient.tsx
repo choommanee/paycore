@@ -29,6 +29,18 @@ type CheckoutView = {
   expires_at: string;
   sandbox: boolean;
   session_token?: string;
+  rail_instructions?: RailInstructions;
+};
+
+// On-chain payment instructions for a crypto/stablecoin rail (e.g. ThaiChain).
+type RailInstructions = {
+  asset: string;
+  address: string;
+  memo: string;
+  chain_id: number;
+  fee_sponsored: boolean;
+  uri?: string;
+  explorer_url?: string;
 };
 
 // Labels for every method the registry can surface (Phase 3 card/promptpay +
@@ -42,6 +54,7 @@ const METHOD_LABEL: Record<string, string> = {
   alipay: "Alipay",
   wechat: "WeChat Pay",
   card_installment: "ผ่อนชำระบัตร",
+  thaichain: "คริปโต · Stablecoin (ThaiChain)",
 };
 
 // The six Phase 4 wallet / redirect methods share one mock flow.
@@ -67,6 +80,7 @@ function MethodMark({ method }: { method: string }) {
     wechat: { text: "WeChat", color: "#09b83e" },
     mobile_banking: { text: "Bank", color: "#185fa5" },
     card_installment: { text: "ผ่อน", color: "#185fa5" },
+    thaichain: { text: "Stablecoin", color: "#0f766e" },
   };
   const w = WORDMARK[method];
   if (!w) return null;
@@ -84,6 +98,36 @@ function CheckoutCard({ children, footer = true }: { children: React.ReactNode; 
     <div className="w-full max-w-[440px] rounded-xl2 bg-paycore-surface border border-paycore-line shadow-cardlg p-6 sm:p-7">
       {children}
       {footer && <SecureFooter />}
+    </div>
+  );
+}
+
+// RailField renders a labelled on-chain instruction value (address / memo /
+// amount) in a bordered box. highlight draws attention to the memo, which the
+// payer MUST attach for the transfer to reconcile.
+function RailField({
+  label,
+  value,
+  mono = false,
+  highlight = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  highlight?: boolean;
+}) {
+  return (
+    <div
+      className={`rounded-xl border px-3.5 py-2.5 ${
+        highlight ? "border-paycore-warn/40 bg-paycore-warnBg" : "border-paycore-line bg-paycore-surface2"
+      }`}
+    >
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-paycore-muted">{label}</div>
+      <div
+        className={`mt-0.5 break-all text-[13px] text-paycore-text ${mono ? "font-mono" : "font-semibold tabular-nums"}`}
+      >
+        {value}
+      </div>
     </div>
   );
 }
@@ -302,6 +346,26 @@ export default function CheckoutClient({ publicId }: { publicId: string }) {
           </>
         )}
 
+        {method === "thaichain" && (
+          <>
+            {!view.sandbox && (
+              <p className="text-xs rounded-lg bg-paycore-warnBg text-paycore-warn px-3 py-2">
+                ช่องทางนี้ยังไม่พร้อมใช้งานบนระบบนี้
+              </p>
+            )}
+            {view.sandbox && (
+              <PayMethodButton
+                token={token}
+                method="thaichain"
+                label="จ่ายด้วย Stablecoin (ThaiChain)"
+                busyLabel="กำลังสร้างคำสั่งชำระ…"
+                onDone={setView}
+                setErr={setErr}
+              />
+            )}
+          </>
+        )}
+
         {method === "card" && view.sandbox && (
           <form onSubmit={payCard} className="space-y-3">
             <p className="flex items-start gap-2 text-xs rounded-lg bg-paycore-warnBg text-paycore-warn px-3 py-2">
@@ -434,6 +498,9 @@ function CheckoutStatusView({ token, initial }: { token: string; initial: Checko
   const walletAwaiting =
     view.status === "requires_action" && !!view.selected_method && WALLET_METHODS.includes(view.selected_method);
 
+  const railAwaiting =
+    view.status === "requires_action" && view.selected_method === "thaichain" && !!view.rail_instructions;
+
   // Render the QR whenever a PromptPay payload is present and not yet paid.
   useEffect(() => {
     if (!view.qr_payload || view.status === "paid") return;
@@ -544,6 +611,77 @@ function CheckoutStatusView({ token, initial }: { token: string; initial: Checko
             ปฏิเสธ
           </button>
         </div>
+      </CheckoutCard>
+    );
+  }
+
+  // Crypto/stablecoin rail awaiting: show the deposit address + memo + finality.
+  if (railAwaiting && view.rail_instructions) {
+    const ri = view.rail_instructions;
+    const assetAmount = (view.amount_minor / 100).toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    return (
+      <CheckoutCard>
+        <MerchantHeader view={view} />
+        <AmountBlock view={view} />
+        <p className="text-center text-sm font-semibold text-paycore-text -mt-3 mb-3">
+          ชำระด้วย {ri.asset} บน ThaiChain
+        </p>
+        <div className="flex items-center justify-center gap-2 mb-4">
+          <span className="rounded-full bg-paycore-accentBg text-paycore-accent text-[11px] font-semibold px-2.5 py-1">
+            Chain ID {ri.chain_id}
+          </span>
+          {ri.fee_sponsored && (
+            <span className="rounded-full bg-paycore-successBg text-paycore-success text-[11px] font-semibold px-2.5 py-1">
+              ค่าแก๊สฟรี · sponsored
+            </span>
+          )}
+        </div>
+        <div className="space-y-3">
+          <RailField label={`ส่ง ${ri.asset} จำนวน`} value={`${assetAmount} ${ri.asset}`} />
+          <RailField label="ที่อยู่ผู้รับ (Address)" value={ri.address} mono />
+          <RailField label="Memo — ต้องแนบทุกครั้ง (ใช้ยืนยันออเดอร์)" value={ri.memo} mono highlight />
+        </div>
+        <p className="text-[11px] text-paycore-muted mt-3 leading-relaxed">
+          โอน {ri.asset} ไปยังที่อยู่ด้านบนพร้อมแนบ memo — ระบบยืนยันอัตโนมัติเมื่อธุรกรรม on-chain
+          ครบตามจำนวน confirmations
+          {ri.explorer_url && (
+            <>
+              {" · "}
+              <a href={ri.explorer_url} target="_blank" rel="noopener noreferrer" className="text-paycore-accent hover:underline">
+                ดูบน explorer
+              </a>
+            </>
+          )}
+        </p>
+        {view.sandbox && (
+          <div className="mt-5">
+            <p className="flex items-start gap-2 text-xs rounded-lg bg-paycore-warnBg text-paycore-warn px-3 py-2 mb-3">
+              <span className="leading-none">🔧</span>
+              <span>โหมดทดสอบ (Sandbox) — จำลองการโอน on-chain แทนการส่งจริง</span>
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => confirmMock(true)}
+                className="flex-1 rounded-xl bg-paycore-primary hover:bg-paycore-primaryHover text-white font-semibold h-12 transition"
+              >
+                จำลองว่าจ่ายแล้ว (ยืนยัน on-chain)
+              </button>
+              <button
+                onClick={() => confirmMock(false)}
+                className="flex-none px-4 rounded-xl border border-paycore-line text-paycore-text2 hover:bg-paycore-surface2 font-medium h-12 transition"
+              >
+                ยกเลิก
+              </button>
+            </div>
+          </div>
+        )}
+        <p className="flex items-center justify-center gap-2 text-paycore-muted text-xs mt-4">
+          <span className="w-3 h-3 rounded-full border-2 border-paycore-line border-t-paycore-primary animate-spin" />
+          รอการยืนยันบนเชน…
+        </p>
       </CheckoutCard>
     );
   }

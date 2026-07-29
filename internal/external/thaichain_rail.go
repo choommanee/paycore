@@ -105,28 +105,35 @@ func (r *ThaiChainRail) CreateCharge(_ context.Context, req RailChargeRequest) (
 		return nil, fmt.Errorf("thaichain: amount must be positive")
 	}
 
-	asset := req.Asset
-	if strings.TrimSpace(asset) == "" {
-		asset = r.Asset
-	}
 	expiry := thaiChainDefaultExpiry
 	if req.ExpirySec > 0 {
 		expiry = time.Duration(req.ExpirySec) * time.Second
 	}
 
-	providerRef := uuid.NewString()
+	// The charge is keyed by (and its ProviderRef is) the PaymentID: it is both
+	// the on-chain transfer memo and a stable, caller-derivable handle, so a
+	// caller that only persists the PaymentID can Confirm without storing a
+	// separate rail reference. CreateCharge is idempotent by PaymentID — a repeat
+	// call returns the same charge and never resets an already-settled one.
 	memo := req.PaymentID
-	now := time.Now()
-	expiresAt := now.Add(expiry)
-
 	r.mu.Lock()
-	r.expected[providerRef] = &thaiChainCharge{
-		req:       req,
-		memo:      memo,
-		expiresAt: expiresAt,
+	charge, ok := r.expected[memo]
+	if !ok {
+		charge = &thaiChainCharge{
+			req:       req,
+			memo:      memo,
+			expiresAt: time.Now().Add(expiry),
+		}
+		r.expected[memo] = charge
 	}
+	effReq := charge.req // use the registered request so repeat calls are consistent
+	expiresAt := charge.expiresAt
 	r.mu.Unlock()
 
+	asset := effReq.Asset
+	if strings.TrimSpace(asset) == "" {
+		asset = r.Asset
+	}
 	instr := RailInstructions{
 		Address:      r.DepositAddress,
 		Memo:         memo,
@@ -134,10 +141,10 @@ func (r *ThaiChainRail) CreateCharge(_ context.Context, req RailChargeRequest) (
 		AssetAddress: r.AssetAddress,
 		ChainID:      ThaiChainID,
 		FeeSponsored: true, // gas sponsored via feePayer — payer holds no gas token
-		URI:          thaiChainURI(r.DepositAddress, r.AssetAddress, asset, memo, req.Amount),
+		URI:          thaiChainURI(r.DepositAddress, r.AssetAddress, asset, memo, effReq.Amount),
 	}
 	return &RailChargeResult{
-		ProviderRef:   providerRef,
+		ProviderRef:   memo,
 		Instructions:  instr,
 		ExpiresAtUnix: expiresAt.Unix(),
 	}, nil

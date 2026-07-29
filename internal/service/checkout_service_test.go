@@ -14,6 +14,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/yourco/payment-gateway/internal/domain"
+	"github.com/yourco/payment-gateway/internal/external"
 	"github.com/yourco/payment-gateway/internal/middleware"
 	moneypkg "github.com/yourco/payment-gateway/internal/pkg/money"
 	"github.com/yourco/payment-gateway/internal/repository"
@@ -240,7 +241,14 @@ func (f *fakeVault) Tokenize(ctx context.Context, pan string) (string, string, e
 // newCheckoutSvc builds the service with fakes. sandbox defaults to true so the
 // card path is exercised; individual tests can rebuild with sandbox=false.
 func newCheckoutSvc(repo repository.Querier, charger Charger, qr QRIssuer, vault Tokenizer, sandbox bool) CheckoutService {
-	return NewCheckoutService(repo, charger, qr, vault, sandbox, zerolog.Nop())
+	return NewCheckoutService(repo, charger, qr, vault, nil, sandbox, zerolog.Nop())
+}
+
+// newCheckoutSvcWithRail wires a sandbox ThaiChain rail so the crypto-rail path
+// can be exercised end-to-end.
+func newCheckoutSvcWithRail(repo repository.Querier, sandbox bool) (CheckoutService, external.PaymentRail) {
+	rail := external.NewThaiChainRailSandbox("", "")
+	return NewCheckoutService(repo, nil, nil, nil, rail, sandbox, zerolog.Nop()), rail
 }
 
 // mkLink seeds an active link and returns it.
@@ -822,6 +830,101 @@ func TestPayCardFailsClosedWhenLinkMissing(t *testing.T) {
 	}
 	if got := charger.callCount(); got != 0 {
 		t.Fatalf("charger called %d times, want 0 (must not charge when link is unverifiable)", got)
+	}
+}
+
+// ---- Task: payThaiChain (crypto/stablecoin rail) ---------------------------
+
+func TestPayThaiChainRequiresActionWithInstructions(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	mkLink(repo, merchant, "pl_abc", 49900, []string{"thaichain"})
+	svc, _ := newCheckoutSvcWithRail(repo, true)
+	tok := openSession(t, repo, svc)
+
+	view, err := svc.Pay(context.Background(), tok, domain.CheckoutPayRequest{Method: "thaichain"})
+	if err != nil {
+		t.Fatalf("Pay: %v", err)
+	}
+	if view.Status != string(domain.CheckoutRequiresAction) {
+		t.Fatalf("status = %q want requires_action", view.Status)
+	}
+	if view.SelectedMethod != "thaichain" {
+		t.Fatalf("selected_method = %q want thaichain", view.SelectedMethod)
+	}
+	in := view.RailInstructions
+	if in == nil {
+		t.Fatal("want on-chain rail instructions on the view")
+	}
+	if in.Memo != view.ID.String() {
+		t.Errorf("memo = %q, want the session id %q (reconciliation key)", in.Memo, view.ID.String())
+	}
+	if in.ChainID != external.ThaiChainID {
+		t.Errorf("chain id = %d, want %d", in.ChainID, external.ThaiChainID)
+	}
+	if !in.FeeSponsored {
+		t.Error("want FeeSponsored=true (gas sponsored via feePayer)")
+	}
+	if in.Address == "" {
+		t.Error("want a deposit address")
+	}
+	// A crypto rail moves no money here and produces no QR / 3DS redirect.
+	if view.QRPayload != "" || view.NextActionURL != "" {
+		t.Fatalf("rail must not set qr_payload/next_action_url: %q / %q", view.QRPayload, view.NextActionURL)
+	}
+	// single_use link reserved (flipped to paid) exactly like the card / wallet paths.
+	if len(repo.linkStatusSets) != 1 || repo.linkStatusSets[0] != "paid" {
+		t.Fatalf("link status sets = %v want [paid] (reserved)", repo.linkStatusSets)
+	}
+}
+
+func TestPayThaiChainGetReSurfacesInstructionsThenConfirmMockSettles(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	mkLink(repo, merchant, "pl_abc", 49900, []string{"thaichain"})
+	svc, _ := newCheckoutSvcWithRail(repo, true)
+	tok := openSession(t, repo, svc)
+
+	if _, err := svc.Pay(context.Background(), tok, domain.CheckoutPayRequest{Method: "thaichain"}); err != nil {
+		t.Fatalf("Pay: %v", err)
+	}
+
+	// A reloaded page (Get) still reports requires_action and re-surfaces the
+	// deposit instructions without a second charge.
+	got, err := svc.Get(context.Background(), tok)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Status != string(domain.CheckoutRequiresAction) {
+		t.Fatalf("status = %q, want requires_action", got.Status)
+	}
+	if got.RailInstructions == nil || got.RailInstructions.Address == "" {
+		t.Fatal("Get should re-surface rail instructions on reload")
+	}
+
+	// Approve → simulate the on-chain deposit → session settles to paid.
+	after, err := svc.ConfirmMock(context.Background(), tok, true)
+	if err != nil {
+		t.Fatalf("ConfirmMock: %v", err)
+	}
+	if after.Status != string(domain.CheckoutPaid) {
+		t.Fatalf("status = %q, want paid after on-chain confirmation", after.Status)
+	}
+}
+
+func TestPayThaiChainBlockedOutsideSandbox(t *testing.T) {
+	repo := newFakeCheckoutRepo()
+	merchant := uuid.New()
+	mkLink(repo, merchant, "pl_abc", 49900, []string{"thaichain"})
+	svc, _ := newCheckoutSvcWithRail(repo, false) // sandbox OFF
+	tok := openSession(t, repo, svc)
+
+	_, err := svc.Pay(context.Background(), tok, domain.CheckoutPayRequest{Method: "thaichain"})
+	if err != domain.ErrCheckoutMethodUnavailable {
+		t.Fatalf("err = %v, want ErrCheckoutMethodUnavailable (rail is sandbox-only)", err)
+	}
+	if len(repo.linkStatusSets) != 0 {
+		t.Fatalf("no link reservation expected when refused, got %v", repo.linkStatusSets)
 	}
 }
 
