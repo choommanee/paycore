@@ -396,6 +396,7 @@
             <span class="lp-chip">💳 บัตร</span>
             <span class="lp-chip">📱 PromptPay</span>
             <span class="lp-chip">👛 e-wallet</span>
+            <span class="lp-chip">🪙 Stablecoin</span>
             <span class="lp-chip">🔁 Webhooks</span>
           </div>
         </div>
@@ -513,6 +514,24 @@
         <h3>Tokenization &amp; PCI</h3>
         <p>ไม่จัดเก็บ PAN เต็มในระบบร้านค้า ข้อมูลบัตรถูกแทนที่ด้วย token ใน tokenization vault ออกแบบตามแนวทาง PCI-DSS และหลักเกณฑ์กำกับดูแลของไทย</p>
       </div>
+
+      <div class="lp-feat" data-reveal>
+        <div class="lp-feat-ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M2 12h20"/><path d="M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18Z"/></svg>
+        </div>
+        <h3>Stablecoin settlement (ThaiChain)</h3>
+        <p>รับชำระด้วย stablecoin บน ThaiChain (chain id 7, Tempo/EVM) — ค่าแก๊สจ่ายด้วย stablecoin และ sponsor ให้ลูกค้า (feePayer) ผูก memo = order เพื่อกระทบยอดอัตโนมัติ พร้อมยืนยัน on-chain finality</p>
+        <span class="lp-tag">รับข้ามประเทศ · settle เร็ว</span>
+      </div>
+
+      <div class="lp-feat" data-reveal data-reveal-delay="1">
+        <div class="lp-feat-ico">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
+        </div>
+        <h3>Developer API &amp; webhooks ลงลายเซ็น</h3>
+        <p>REST API สะอาด ตอบด้วย envelope มาตรฐาน คิดเงินเป็นหน่วยสตางค์ พร้อม webhook ที่เซ็น HMAC-SHA256 แบบผูก timestamp (กัน replay) และเอกสาร verify พร้อมใช้</p>
+        <span class="lp-tag">มาตรฐาน · กัน replay</span>
+      </div>
     </div>
   </div>
 </section>
@@ -563,6 +582,11 @@
               <span class="co-radio"></span>
               <span class="co-mname">TrueMoney Wallet</span>
               <span class="mt-mono" style="color:#e8792b">TrueMoney</span>
+            </div>
+            <div class="co-m">
+              <span class="co-radio"></span>
+              <span class="co-mname">คริปโต · Stablecoin</span>
+              <span class="mt-mono" style="color:#0f766e">Stablecoin</span>
             </div>
           </div>
 
@@ -697,7 +721,7 @@
     <div class="lp-head" data-reveal>
       <div class="kicker">ช่องทางการชำระเงิน</div>
       <h2>รองรับวิธีชำระที่คนไทยใช้จริง</h2>
-      <p>ครอบคลุมทั้งบัตรระหว่างประเทศ, PromptPay/Thai QR และ e-wallet ยอดนิยม (ช่องทาง e-wallet ทำงานผ่าน sandbox adapter ในโหมดทดสอบ)</p>
+      <p>ครอบคลุมทั้งบัตรระหว่างประเทศ, PromptPay/Thai QR, e-wallet ยอดนิยม และ stablecoin บน ThaiChain (ช่องทาง e-wallet และ stablecoin ทำงานผ่าน sandbox adapter ในโหมดทดสอบ)</p>
     </div>
     <div class="lp-methods">
       <div class="lp-method-tile" data-reveal>
@@ -743,6 +767,10 @@
       <div class="lp-method-tile" data-reveal>
         <span class="mt-badge" style="background:#eef1f5"><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true" fill="none" stroke="#374151" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M8 4v16"/></svg></span>
         <div><div class="mt-name">ผ่อนชำระบัตร</div><div class="mt-sub">installment · sandbox</div></div>
+      </div>
+      <div class="lp-method-tile" data-reveal>
+        <span class="mt-badge" style="background:#e6f5f1"><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true" fill="none" stroke="#0f766e" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M2 12h20"/><path d="M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18Z"/></svg></span>
+        <div><div class="mt-name">Stablecoin</div><div class="mt-sub">ThaiChain · sandbox</div></div>
       </div>
     </div>
   </div>
@@ -821,6 +849,13 @@
             <div class="d-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
             <div><h4>ปลอดภัยตั้งแต่ต้น</h4><p>ยืนยันตัวตนด้วย API key ไม่มีการบันทึก PAN เต็ม ใช้ tokenization vault ทุกครั้ง</p></div>
           </div>
+          <div class="d-item">
+            <div class="d-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 5v6c0 5 3.5 8 8 10 4.5-2 8-5 8-10V5l-8-3Z"/><path d="M9 12l2 2 4-4"/></svg></div>
+            <div><h4>Webhooks ลงลายเซ็น HMAC-SHA256</h4><p>ทุก event เซ็นแบบ <code class="pc-code">t=,v1=HMAC</code> ผูก timestamp กัน replay ตรวจแบบ constant-time — <a href="/developers" style="color:var(--pc-accent);font-weight:600">ดูสูตร verify (Node/Python)</a></p></div>
+          </div>
+        </div>
+        <div style="margin-top:var(--pc-s5)">
+          <a href="/developers" class="pc-btn pc-btn-secondary">เปิดเอกสารนักพัฒนา →</a>
         </div>
       </div>
 
